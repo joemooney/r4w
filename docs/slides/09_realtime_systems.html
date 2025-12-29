@@ -195,20 +195,21 @@ concurrently</li>
 </section>
 <section id="radio-state-machine" class="slide level2">
 <h2>Radio State Machine</h2>
-<pre><code>      ┌─────────┐                     ┌─────────┐
+<pre><code>
+      ┌─────────┐                     ┌─────────┐
       │  Idle   │◄───────────────────►│ Hopping │
       └────┬────┘                     └─────────┘
            │
       ┌────┴────┐
       ▼         ▼
-┌───────────┐     ┌───────────┐
+┌────────────┐     ┌───────────┐
 │Transmitting│     │ Receiving │
-└─────┬─────┘     └─────┬─────┘
-      │                 │
-      ▼                 ▼
-┌───────────┐     ┌───────────┐
+└──────┬─────┘     └─────┬─────┘
+       │                 │
+       ▼                 ▼
+┌────────────┐     ┌────────────┐
 │TxTurnaround│────►│RxTurnaround│
-└───────────┘     └───────────┘</code></pre>
+└────────────┘     └────────────┘</code></pre>
 </section>
 <section id="state-transitions" class="slide level2">
 <h2>State Transitions</h2>

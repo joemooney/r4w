@@ -154,19 +154,20 @@ Code)</p>
 </section>
 <section id="defense-in-depth" class="slide level2">
 <h2>Defense in Depth</h2>
-<pre><code>┌──────────────────────────────────────────────────────────┐
-│                    Application Layer                      │
-│  • Input validation • Authentication • Audit logging      │
+<pre><code>
+┌──────────────────────────────────────────────────────────┐
+│                    Application Layer                     │
+│  • Input validation • Authentication • Audit logging     │
 ├──────────────────────────────────────────────────────────┤
-│                    R4W Framework Layer                    │
-│  • Memory-safe Rust • Type-safe interfaces                │
-│  • Zeroization • Constant-time crypto                     │
+│                    R4W Framework Layer                   │
+│  • Memory-safe Rust • Type-safe interfaces               │
+│  • Zeroization • Constant-time crypto                    │
 ├──────────────────────────────────────────────────────────┤
-│                    OS/Runtime Layer                       │
+│                    OS/Runtime Layer                      │
 │  • Namespaces • Seccomp • SELinux/AppArmor               │
 ├──────────────────────────────────────────────────────────┤
-│                    Hardware Layer                         │
-│  • Secure boot • TPM/HSM • Physical controls              │
+│                    Hardware Layer                        │
+│  • Secure boot • TPM/HSM • Physical controls             │
 └──────────────────────────────────────────────────────────┘</code></pre>
 </section>
 <section id="isolation-levels" class="slide level2">
@@ -234,22 +235,23 @@ Code)</p>
 </section>
 <section id="trust-boundaries" class="slide level2">
 <h2>Trust Boundaries</h2>
-<pre><code>┌────────────────────────────────────────────────────────┐
-│                    Untrusted Zone                       │
-│  RF Environment - Adversary can transmit anything       │
+<pre><code>
+┌────────────────────────────────────────────────────────┐
+│                    Untrusted Zone                      │
+│  RF Environment - Adversary can transmit anything      │
 ├────────────────────────────────────────────────────────┤
-│              Trust Boundary: RF Front-End               │
+│              Trust Boundary: RF Front-End              │
 ├────────────────────────────────────────────────────────┤
-│  SDR/ADC - Physical interface                           │
+│  SDR/ADC - Physical interface                          │
 ├────────────────────────────────────────────────────────┤
-│              Trust Boundary: Driver/Userspace           │
+│              Trust Boundary: Driver/Userspace          │
 ├────────────────────────────────────────────────────────┤
-│  R4W Processing - Sample processing                     │
+│  R4W Processing - Sample processing                    │
 ├────────────────────────────────────────────────────────┤
-│              Trust Boundary: Application                │
+│              Trust Boundary: Application               │
 ├────────────────────────────────────────────────────────┤
-│                    Trusted Zone                         │
-│  Crypto/Keys - Classified/sensitive data                │
+│                    Trusted Zone                        │
+│  Crypto/Keys - Classified/sensitive data               │
 └────────────────────────────────────────────────────────┘</code></pre>
 </section>
 <section id="level-1-rust-memory-safety" class="slide level2">
@@ -370,8 +372,9 @@ class="sourceCode rust"><code class="sourceCode rust"><span id="cb7-1"><a href="
 <section id="level-7-fpga-partition" class="slide level2">
 <h2>Level 7: FPGA Partition</h2>
 <p>Hardware isolation on FPGA:</p>
-<pre><code>┌───────────────────────────────────────────┐
-│              FPGA Fabric                   │
+<pre><code>
+┌───────────────────────────────────────────┐
+│              FPGA Fabric                  │
 ├───────────────┬───────────────────────────┤
 │  Partition A  │  Partition B              │
 │  (Trusted)    │  (Untrusted Waveform)     │
@@ -380,7 +383,7 @@ class="sourceCode rust"><code class="sourceCode rust"><span id="cb7-1"><a href="
 │  DMA ctrl     │  No DMA access            │
 │  Full AXI     │  Limited registers        │
 ├───────────────┼───────────────────────────┤
-│       Hardware Firewall (no crossing)      │
+│       Hardware Firewall (no crossing)     │
 └───────────────────────────────────────────┘</code></pre>
 </section>
 <section id="threat-model" class="slide level2">
@@ -492,16 +495,17 @@ level</label></li>
 </section>
 <section id="network-security" class="slide level2">
 <h2>Network Security</h2>
-<pre><code>┌─────────────────────────────────────────────────────────┐
-│                    R4W Control Plane                     │
+<pre><code>
+┌─────────────────────────────────────────────────────────┐
+│                    R4W Control Plane                    │
 ├─────────────────────────────────────────────────────────┤
 │  REST API    │  gRPC        │  WebSocket                │
 │  HTTPS/TLS   │  mTLS        │  WSS                      │
 ├─────────────────────────────────────────────────────────┤
-│              Authentication                              │
+│              Authentication                             │
 │  • API keys  • Certificates  • OAuth2/OIDC              │
 ├─────────────────────────────────────────────────────────┤
-│              Authorization                               │
+│              Authorization                              │
 │  • Role-based  • Attribute-based  • Capability-based    │
 └─────────────────────────────────────────────────────────┘</code></pre>
 </section>
@@ -542,8 +546,9 @@ level</label></li>
 </section>
 <section id="fpga-bitstream-security" class="slide level2">
 <h2>FPGA Bitstream Security</h2>
-<pre><code>┌─────────────────────────────────────────────────────────┐
-│                Bitstream Protection                      │
+<pre><code>
+┌─────────────────────────────────────────────────────────┐
+│                Bitstream Protection                     │
 ├─────────────────────────────────────────────────────────┤
 │  1. Encryption (AES-256-GCM)                            │
 │  2. Authentication (RSA/ECDSA signature)                │
