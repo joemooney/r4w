@@ -24,6 +24,15 @@ pub enum IsolationLevel {
     /// Use case: Development, testing
     L1_MemorySafe = 1,
 
+    /// Level 1.5: WebAssembly sandbox isolation
+    ///
+    /// Provides: Memory isolation, capability-based security, syscall filtering via WASI
+    /// Requires: wasmtime runtime, wasm32-wasip2 compilation target
+    /// Use case: Plugin isolation, untrusted waveforms, portable deployment
+    /// Trade-offs: Higher latency than L1 (not suitable for hard real-time DSP)
+    #[cfg(feature = "wasm")]
+    L1_5_Wasm = 15, // Using 15 to represent 1.5 while maintaining ordering
+
     /// Level 2: Linux namespaces (PID, NET, MOUNT, USER)
     ///
     /// Provides: Process isolation, separate network stack, isolated filesystem view
@@ -79,6 +88,8 @@ impl IsolationLevel {
     pub fn description(&self) -> &'static str {
         match self {
             Self::L1_MemorySafe => "Rust memory safety (development)",
+            #[cfg(feature = "wasm")]
+            Self::L1_5_Wasm => "WebAssembly sandbox (plugins, portability)",
             Self::L2_Namespaces => "Linux namespaces (multi-tenant)",
             Self::L3_LSM => "Seccomp + SELinux/AppArmor (government)",
             Self::L4_Container => "Container isolation (cloud)",
@@ -91,20 +102,26 @@ impl IsolationLevel {
 
     /// Check if this level requires root/admin privileges
     pub fn requires_root(&self) -> bool {
-        matches!(
-            self,
-            Self::L2_Namespaces
-                | Self::L3_LSM
-                | Self::L5_MicroVM
-                | Self::L6_FullVM
-                | Self::L7_Hardware
-        )
+        match self {
+            #[cfg(feature = "wasm")]
+            Self::L1_5_Wasm => false, // WASM runs unprivileged
+            _ => matches!(
+                self,
+                Self::L2_Namespaces
+                    | Self::L3_LSM
+                    | Self::L5_MicroVM
+                    | Self::L6_FullVM
+                    | Self::L7_Hardware
+            ),
+        }
     }
 
     /// Check if this level is available on the current platform
     pub fn is_available(&self) -> bool {
         match self {
             Self::L1_MemorySafe => true,
+            #[cfg(feature = "wasm")]
+            Self::L1_5_Wasm => true, // WASM runtime is always available when feature enabled
             #[cfg(target_os = "linux")]
             Self::L2_Namespaces | Self::L3_LSM => true,
             #[cfg(not(target_os = "linux"))]

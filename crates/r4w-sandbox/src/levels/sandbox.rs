@@ -8,6 +8,9 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "process")]
 use crate::Namespaces;
 
+#[cfg(feature = "wasm")]
+use crate::wasm::WasmConfig;
+
 /// Configuration for a sandbox instance
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SandboxConfig {
@@ -47,6 +50,11 @@ pub struct SandboxConfig {
 
     /// Device access (e.g., "/dev/uio0")
     pub device_access: Vec<String>,
+
+    /// WASM sandbox configuration (for L1_5_Wasm)
+    #[cfg(feature = "wasm")]
+    #[serde(skip)]
+    pub wasm_config: Option<WasmConfig>,
 }
 
 impl Default for SandboxConfig {
@@ -65,6 +73,8 @@ impl Default for SandboxConfig {
             read_only_root: true,
             tmpfs_mounts: vec!["/tmp".to_string()],
             device_access: vec![],
+            #[cfg(feature = "wasm")]
+            wasm_config: None,
         }
     }
 }
@@ -111,6 +121,14 @@ impl Sandbox {
         match self.config.level {
             IsolationLevel::L1_MemorySafe => {
                 // No additional isolation - just run
+                Ok(f())
+            }
+            #[cfg(feature = "wasm")]
+            IsolationLevel::L1_5_Wasm => {
+                // WASM provides memory isolation but can't run arbitrary closures
+                // For WASM execution, use WasmSandbox directly
+                // This is a compatibility shim that just runs the closure
+                tracing::warn!("L1_5_Wasm: closure executed without WASM isolation; use WasmSandbox for full isolation");
                 Ok(f())
             }
             #[cfg(feature = "process")]
@@ -337,6 +355,13 @@ impl SandboxBuilder {
     /// Add device access
     pub fn add_device(mut self, device: impl Into<String>) -> Self {
         self.config.device_access.push(device.into());
+        self
+    }
+
+    /// Set WASM configuration (for L1_5_Wasm)
+    #[cfg(feature = "wasm")]
+    pub fn wasm_config(mut self, config: WasmConfig) -> Self {
+        self.config.wasm_config = Some(config);
         self
     }
 

@@ -8,15 +8,16 @@ This document provides comprehensive guidance for isolating waveforms from each 
 2. [Threat Model](#threat-model)
 3. [Isolation Levels](#isolation-levels)
 4. [Level 1-3: Process Isolation](#level-1-3-process-isolation)
-5. [Level 4-5: Container Isolation](#level-4-5-container-isolation)
-6. [Level 6: Virtual Machine Isolation](#level-6-virtual-machine-isolation)
-7. [Level 7: Hardware Isolation](#level-7-hardware-isolation)
-8. [Level 8: Air-Gap Isolation](#level-8-air-gap-isolation)
-9. [FPGA Isolation](#fpga-isolation)
-10. [Memory Protection](#memory-protection)
-11. [Cross-Domain Solutions](#cross-domain-solutions)
-12. [Implementation Guide](#implementation-guide)
-13. [Deployment Configurations](#deployment-configurations)
+5. [Level 1.5: WebAssembly Isolation](#level-15-webassembly-isolation)
+6. [Level 4-5: Container Isolation](#level-4-5-container-isolation)
+7. [Level 6: Virtual Machine Isolation](#level-6-virtual-machine-isolation)
+8. [Level 7: Hardware Isolation](#level-7-hardware-isolation)
+9. [Level 8: Air-Gap Isolation](#level-8-air-gap-isolation)
+10. [FPGA Isolation](#fpga-isolation)
+11. [Memory Protection](#memory-protection)
+12. [Cross-Domain Solutions](#cross-domain-solutions)
+13. [Implementation Guide](#implementation-guide)
+14. [Deployment Configurations](#deployment-configurations)
 
 ---
 
@@ -64,21 +65,22 @@ In SDR systems processing multiple waveforms, several security concerns arise:
 │  Overhead ──────────────────────────────────────────────────────► Security  │
 │  (Low)                                                              (High)  │
 │                                                                             │
-│  ┌─────┐  ┌─────┐  ┌─────┐  ┌─────┐  ┌─────┐  ┌─────┐  ┌─────┐  ┌─────┐     │
-│  │ L1  │  │ L2  │  │ L3  │  │ L4  │  │ L5  │  │ L6  │  │ L7  │  │ L8  │     │
-│  │     │  │     │  │     │  │     │  │     │  │     │  │     │  │     │     │
-│  │Proc │  │ NS  │  │LSM  │  │Cont │  │uVM  │  │ VM  │  │ HW  │  │ Air │     │
-│  │     │  │     │  │     │  │     │  │     │  │     │  │     │  │ Gap │     │
-│  └─────┘  └─────┘  └─────┘  └─────┘  └─────┘  └─────┘  └─────┘  └─────┘     │
+│  ┌─────┐ ┌─────┐ ┌─────┐ ┌─────┐ ┌─────┐ ┌─────┐ ┌─────┐ ┌─────┐ ┌─────┐   │
+│  │ L1  │ │L1.5 │ │ L2  │ │ L3  │ │ L4  │ │ L5  │ │ L6  │ │ L7  │ │ L8  │   │
+│  │     │ │     │ │     │ │     │ │     │ │     │ │     │ │     │ │     │   │
+│  │Proc │ │WASM │ │ NS  │ │LSM  │ │Cont │ │uVM  │ │ VM  │ │ HW  │ │ Air │   │
+│  │     │ │     │ │     │ │     │ │     │ │     │ │     │ │     │ │ Gap │   │
+│  └─────┘ └─────┘ └─────┘ └─────┘ └─────┘ └─────┘ └─────┘ └─────┘ └─────┘   │
 │                                                                             │
-│  L1: Process        - Separate processes, shared kernel                     │
-│  L2: Namespace      - + Linux namespaces (pid, net, mount, user)            │
-│  L3: LSM            - + seccomp + SELinux/AppArmor                          │
-│  L4: Container      - Docker/Podman with security profiles                  │
-│  L5: MicroVM        - Firecracker/gVisor (lightweight VMs)                  │
-│  L6: Full VM        - KVM/QEMU with dedicated resources                     │
-│  L7: Hardware       - CPU pinning + IOMMU + memory encryption               │
-│  L8: Air Gap        - Physically separate systems with data diodes          │
+│  L1:   Process        - Separate processes, shared kernel                   │
+│  L1.5: WebAssembly    - WASM sandbox with WASI capability control           │
+│  L2:   Namespace      - + Linux namespaces (pid, net, mount, user)          │
+│  L3:   LSM            - + seccomp + SELinux/AppArmor                        │
+│  L4:   Container      - Docker/Podman with security profiles                │
+│  L5:   MicroVM        - Firecracker/gVisor (lightweight VMs)                │
+│  L6:   Full VM        - KVM/QEMU with dedicated resources                   │
+│  L7:   Hardware       - CPU pinning + IOMMU + memory encryption             │
+│  L8:   Air Gap        - Physically separate systems with data diodes        │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -130,6 +132,7 @@ In SDR systems processing multiple waveforms, several security concerns arise:
 | Level | Mechanism | Use Case | Latency Impact |
 |-------|-----------|----------|----------------|
 | L1 | Process | Development, testing | ~0% |
+| L1.5 | WebAssembly | Plugin isolation, portability | 10-50% |
 | L2 | Namespace | Multi-tenant non-critical | ~0% |
 | L3 | LSM | Production single-security | <1% |
 | L4 | Container | Multi-tenant production | 1-5% |
@@ -297,6 +300,157 @@ neverallow r4w_unclass_t r4w_keys_t:file *;
 allow r4w_topsecret_t fpga_device_t:chr_file { read write ioctl };
 allow r4w_secret_t fpga_device_t:chr_file { read write ioctl };
 neverallow r4w_unclass_t fpga_device_t:chr_file *;
+```
+
+---
+
+## Level 1.5: WebAssembly Isolation
+
+WebAssembly (WASM) provides a lightweight isolation mechanism that sits between basic process isolation and Linux namespaces. It's particularly well-suited for:
+
+- **Plugin/waveform isolation**: Run untrusted waveform code safely
+- **Portable deployment**: Same binary runs on any platform
+- **Fast cold-start**: ~10-15x faster than containers
+- **Capability-based security**: Deny-by-default via WASI
+
+### Architecture
+
+```
+┌────────────────────────────────────────────────────────────────────────────┐
+│                    WebAssembly Isolation (L1.5)                            │
+├────────────────────────────────────────────────────────────────────────────┤
+│                                                                            │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                         Host Process                                │   │
+│  │  ┌───────────────────────────────────────────────────────────────┐  │   │
+│  │  │                     Wasmtime Runtime                          │  │   │
+│  │  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐    │  │   │
+│  │  │  │  Waveform A │  │  Waveform B │  │    Waveform C       │    │  │   │
+│  │  │  │  (WASM)     │  │  (WASM)     │  │    (WASM)           │    │  │   │
+│  │  │  │             │  │             │  │                     │    │  │   │
+│  │  │  │ Linear Mem  │  │ Linear Mem  │  │   Linear Memory     │    │  │   │
+│  │  │  │ (isolated)  │  │ (isolated)  │  │   (isolated)        │    │  │   │
+│  │  │  └─────────────┘  └─────────────┘  └─────────────────────┘    │  │   │
+│  │  │                                                               │  │   │
+│  │  │  WASI Capabilities (per-module):                              │  │   │
+│  │  │  • stdio: stdout/stderr for logging                           │  │   │
+│  │  │  • clocks: timing for DSP                                     │  │   │
+│  │  │  • random: crypto operations                                  │  │   │
+│  │  │  • filesystem: DENIED                                         │  │   │
+│  │  │  • network: DENIED                                            │  │   │
+│  │  │  • env vars: DENIED                                           │  │   │
+│  │  └───────────────────────────────────────────────────────────────┘  │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                            │
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+### r4w-sandbox WASM API
+
+```rust
+use r4w_sandbox::{WasmSandbox, WasmConfig, WasiCapabilities};
+
+// Create sandbox with DSP-appropriate capabilities
+let config = WasmConfig::dsp()
+    .max_memory(512 * 1024 * 1024)  // 512 MB for sample buffers
+    .fuel_limit(10_000_000_000);     // Limit execution time
+
+let sandbox = WasmSandbox::new(config)?;
+
+// Load waveform compiled to WASM
+let module = sandbox.load_module("waveforms/bpsk.wasm")?;
+let mut instance = sandbox.instantiate(&module)?;
+
+// Call waveform functions
+let result = instance.call_i32("modulate")?;
+println!("Executed in {}us, consumed {} fuel",
+    result.execution_time_us,
+    result.fuel_consumed.unwrap_or(0));
+
+// Direct memory access for sample buffers
+instance.write_memory(0x1000, &samples)?;
+let output = instance.read_memory(0x2000, output_len)?;
+```
+
+### WASI Capability Presets
+
+```rust
+// Maximum isolation - no capabilities
+let caps = WasiCapabilities::none();
+
+// DSP workloads - stdout/stderr for logging, clocks for timing
+let caps = WasiCapabilities::dsp();  // Recommended for waveforms
+
+// Development - full stdio for debugging
+let caps = WasiCapabilities::with_stdio();
+
+// Custom capabilities
+let caps = WasiCapabilities::none()
+    .stdout(true)
+    .stderr(true)
+    .clocks(true)
+    .random(true)  // For crypto operations
+    .preopened_dir_ro("/data/samples");  // Read-only sample files
+```
+
+### Trade-offs
+
+| Aspect | WASM (L1.5) | Namespaces (L2) | Containers (L4) |
+|--------|-------------|-----------------|-----------------|
+| **Latency overhead** | 10-50% | ~0% | 1-5% |
+| **Cold start** | <1ms | ~10ms | ~100ms |
+| **Memory isolation** | Linear memory | Virtual memory | cgroups |
+| **Syscall filtering** | WASI only | seccomp | seccomp |
+| **Portability** | Cross-platform | Linux only | Linux/Docker |
+| **Root required** | No | Sometimes | Usually |
+
+### When to Use WASM Isolation
+
+**Good fit:**
+- Plugin architecture for third-party waveforms
+- Soft real-time DSP where ~10-50% overhead is acceptable
+- Cross-platform deployment (Linux, macOS, Windows, embedded)
+- Untrusted code execution without root privileges
+- Rapid development iteration (fast compilation to WASM)
+
+**Poor fit:**
+- Hard real-time DSP requiring deterministic latency
+- Performance-critical inner loops (use native code + FPGA)
+- Multi-level security requiring kernel-level isolation
+- Direct hardware access (FPGA, SDR devices)
+
+### Compiling Waveforms to WASM
+
+```bash
+# Install WASM target
+rustup target add wasm32-wasip1
+
+# Compile waveform to WASM
+cargo build --target wasm32-wasip1 --release -p my-waveform
+
+# Optimize (optional)
+wasm-opt -O3 target/wasm32-wasip1/release/my_waveform.wasm \
+    -o waveforms/my_waveform.wasm
+```
+
+### Benchmark Example
+
+```rust
+use r4w_sandbox::{WasmSandbox, WasmConfig, WasmBenchmark};
+
+let sandbox = WasmSandbox::new(WasmConfig::dsp())?;
+let module = sandbox.load_module("waveforms/bpsk.wasm")?;
+let mut instance = sandbox.instantiate(&module)?;
+
+// Benchmark modulation function
+let mut bench = WasmBenchmark::new();
+for _ in 0..1000 {
+    let result = instance.call_i32("process_samples")?;
+    bench.record(result.execution_time_us);
+}
+
+println!("WASM benchmark: {}", bench.summary());
+// Output: n=1000 min=45us mean=52.3us p50=51us p99=89us max=156us
 ```
 
 ---

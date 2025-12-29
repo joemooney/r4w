@@ -11,6 +11,7 @@
 //! | Level | Mechanism | Use Case |
 //! |-------|-----------|----------|
 //! | L1 | Rust memory safety | Basic safety, development |
+//! | L1.5 | WebAssembly (WASM) | Plugin isolation, portability |
 //! | L2 | Linux namespaces | Multi-tenant, privilege separation |
 //! | L3 | Seccomp + SELinux/AppArmor | Defense contractors, government |
 //! | L4 | Containers (Docker/Podman) | Cloud deployment, easy management |
@@ -47,6 +48,7 @@
 //! - `fpga` - FPGA partition isolation
 //! - `hardware` - Hardware isolation (CPU pinning, NUMA, Intel CAT)
 //! - `memory` - Memory protection (encrypted buffers, guard pages)
+//! - `wasm` - WebAssembly sandbox isolation (wasmtime)
 //! - `full` - All features enabled
 //!
 //! See the [ISOLATION_GUIDE.md](../../../docs/ISOLATION_GUIDE.md) for detailed documentation.
@@ -66,6 +68,9 @@ pub mod ipc;
 #[cfg(feature = "fpga")]
 pub mod fpga;
 
+#[cfg(feature = "wasm")]
+pub mod wasm;
+
 pub mod policy;
 
 // Re-export main types
@@ -75,6 +80,9 @@ pub use policy::{SeccompProfile, Capability};
 
 #[cfg(feature = "memory")]
 pub use memory::{SecureBuffer, EncryptedBuffer};
+
+#[cfg(feature = "wasm")]
+pub use wasm::{WasmSandbox, WasmConfig, WasiCapabilities, WasmModule, WasmInstance, WasmCallResult, WasmBenchmark};
 
 /// Namespace flags for process isolation
 #[cfg(feature = "process")]

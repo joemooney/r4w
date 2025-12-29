@@ -41,6 +41,10 @@ pub enum SandboxError {
     #[error("hardware isolation error: {0}")]
     HardwareError(String),
 
+    /// WebAssembly sandbox error
+    #[error("WASM sandbox error: {0}")]
+    WasmError(String),
+
     /// Configuration error
     #[error("configuration error: {0}")]
     ConfigError(String),
