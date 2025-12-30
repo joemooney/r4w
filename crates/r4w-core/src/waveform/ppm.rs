@@ -194,6 +194,165 @@ impl PPM {
         let bits = self.demod_adsb(samples);
         AdsbMessage::from_bits(&bits)
     }
+
+    /// Detect ADS-B preambles in a continuous sample stream
+    ///
+    /// Returns sample indices where preambles were detected.
+    /// Use these offsets to extract and decode individual messages.
+    pub fn detect_preambles(&self, samples: &[IQSample]) -> Vec<usize> {
+        if self.variant != PpmVariant::AdsB {
+            return Vec::new();
+        }
+
+        let sps = self.sps();
+        let preamble_len = sps * 8; // 8µs preamble
+        let message_len = preamble_len + sps * 112; // preamble + 112 data bits
+
+        if samples.len() < message_len {
+            return Vec::new();
+        }
+
+        let mut detections = Vec::new();
+
+        // Compute magnitude for correlation
+        let magnitudes: Vec<f64> = samples
+            .iter()
+            .map(|s| (s.re * s.re + s.im * s.im).sqrt())
+            .collect();
+
+        // Sliding window preamble detection - find peak correlations
+        let mut i = 0;
+        while i < samples.len().saturating_sub(message_len) {
+            let score = self.preamble_score(&magnitudes[i..i + preamble_len], sps);
+            if score > 0.5 {
+                // Found a candidate - search nearby for the best match
+                let search_start = i;
+                let search_end = (i + sps).min(samples.len().saturating_sub(message_len));
+                let mut best_idx = i;
+                let mut best_score = score;
+
+                for j in search_start..search_end {
+                    let s = self.preamble_score(&magnitudes[j..j + preamble_len], sps);
+                    if s > best_score {
+                        best_score = s;
+                        best_idx = j;
+                    }
+                }
+
+                // Check we're not too close to a previous detection
+                if detections.last().map_or(true, |&last| best_idx > last + message_len / 2) {
+                    detections.push(best_idx);
+                }
+
+                // Skip past this message
+                i = best_idx + message_len / 2;
+            } else {
+                i += 1;
+            }
+        }
+
+        detections
+    }
+
+    /// Calculate preamble correlation score (0.0 to 1.0)
+    fn preamble_score(&self, mags: &[f64], sps: usize) -> f64 {
+        // Preamble pattern: pulses at 0, 1, 3.5, 4.5 µs
+        // Each pulse is 0.5µs wide
+        let half_sps = sps / 2;
+
+        // Expected pulse positions (in samples)
+        let pulse_positions = [
+            0,                           // 0 µs
+            sps,                         // 1 µs
+            (3.5 * sps as f64) as usize, // 3.5 µs
+            (4.5 * sps as f64) as usize, // 4.5 µs
+        ];
+
+        // Expected quiet positions (between pulses)
+        let quiet_positions = [
+            (0.5 * sps as f64) as usize, // 0.5 µs
+            (1.5 * sps as f64) as usize, // 1.5 µs
+            (2.5 * sps as f64) as usize, // 2.5 µs
+            (5.0 * sps as f64) as usize, // 5.0 µs
+            (6.0 * sps as f64) as usize, // 6.0 µs
+            (7.0 * sps as f64) as usize, // 7.0 µs
+        ];
+
+        // Calculate individual pulse magnitudes - ALL must have energy
+        let pulse_mags: Vec<f64> = pulse_positions
+            .iter()
+            .filter_map(|&pos| {
+                if pos + half_sps <= mags.len() {
+                    Some(
+                        mags[pos..pos + half_sps]
+                            .iter()
+                            .sum::<f64>()
+                            / half_sps as f64,
+                    )
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // All 4 pulse positions must have energy above threshold
+        let min_pulse = 0.1; // Minimum required pulse magnitude
+        if pulse_mags.len() < 4 || pulse_mags.iter().any(|&m| m < min_pulse) {
+            return 0.0;
+        }
+
+        let pulse_avg: f64 = pulse_mags.iter().sum::<f64>() / pulse_mags.len() as f64;
+
+        // Calculate average quiet magnitude
+        let quiet_sum: f64 = quiet_positions
+            .iter()
+            .filter_map(|&pos| {
+                if pos + half_sps <= mags.len() {
+                    Some(
+                        mags[pos..pos + half_sps]
+                            .iter()
+                            .sum::<f64>()
+                            / half_sps as f64,
+                    )
+                } else {
+                    None
+                }
+            })
+            .sum();
+        let quiet_avg = quiet_sum / quiet_positions.len() as f64;
+
+        // Return normalized score
+        let ratio = pulse_avg / (quiet_avg + 0.001);
+        (ratio / 10.0).min(1.0) // Normalize: ratio of 10+ = score of 1.0
+    }
+
+    /// Process a continuous sample stream and extract all valid ADS-B messages
+    ///
+    /// This is the main entry point for decoding ADS-B from an SDR receiver.
+    pub fn decode_stream(&self, samples: &[IQSample]) -> Vec<AdsbMessage> {
+        if self.variant != PpmVariant::AdsB {
+            return Vec::new();
+        }
+
+        let sps = self.sps();
+        let message_len = sps * (8 + 112); // preamble + 112 data bits
+
+        let preambles = self.detect_preambles(samples);
+        let mut messages = Vec::new();
+
+        for preamble_idx in preambles {
+            if preamble_idx + message_len <= samples.len() {
+                let message_samples = &samples[preamble_idx..preamble_idx + message_len];
+                if let Some(msg) = self.demodulate_adsb_message(message_samples) {
+                    if msg.crc_valid {
+                        messages.push(msg);
+                    }
+                }
+            }
+        }
+
+        messages
+    }
 }
 
 impl Waveform for PPM {
@@ -395,5 +554,127 @@ mod tests {
         assert_eq!(msg.icao_address, 0x4840D6);
         assert!(matches!(msg.downlink_format, DownlinkFormat::ExtendedSquitter));
         assert!(matches!(msg.type_code, TypeCode::AircraftIdentification(_)));
+    }
+
+    #[test]
+    fn test_preamble_detection() {
+        let ppm = PPM::adsb(2_000_000.0);
+
+        // Generate a valid message
+        let message_bytes: [u8; 14] = [
+            0x8D, 0x48, 0x40, 0xD6, 0x20, 0x2C, 0xC3, 0x71,
+            0xC3, 0x2C, 0xE0, 0x57, 0x60, 0x98,
+        ];
+
+        let mut bits: Vec<u8> = Vec::with_capacity(112);
+        for byte in &message_bytes {
+            for i in (0..8).rev() {
+                bits.push((byte >> i) & 1);
+            }
+        }
+
+        // Modulate to get samples
+        let message_samples = ppm.modulate(&bits);
+
+        // Create a stream with padding before and after the message
+        let mut stream = vec![IQSample::new(0.0, 0.0); 1000];
+        stream.extend_from_slice(&message_samples);
+        stream.extend(vec![IQSample::new(0.0, 0.0); 1000]);
+
+        // Detect preambles
+        let preambles = ppm.detect_preambles(&stream);
+
+        // Should find at least one preamble (at offset ~1000)
+        assert!(!preambles.is_empty(), "Should detect at least one preamble");
+
+        // The detected preamble should be near the start of our message
+        let first_preamble = preambles[0];
+        assert!(
+            first_preamble >= 900 && first_preamble <= 1100,
+            "Preamble should be detected near sample 1000, got {}",
+            first_preamble
+        );
+    }
+
+    #[test]
+    fn test_stream_decode() {
+        // Use 8 MHz sample rate for more reliable preamble detection
+        // (4 samples per bit gives better timing resolution)
+        let ppm = PPM::adsb(8_000_000.0);
+
+        // Generate a valid message
+        let message_bytes: [u8; 14] = [
+            0x8D, 0x48, 0x40, 0xD6, 0x20, 0x2C, 0xC3, 0x71,
+            0xC3, 0x2C, 0xE0, 0x57, 0x60, 0x98,
+        ];
+
+        let mut bits: Vec<u8> = Vec::with_capacity(112);
+        for byte in &message_bytes {
+            for i in (0..8).rev() {
+                bits.push((byte >> i) & 1);
+            }
+        }
+
+        // Modulate to get samples
+        let message_samples = ppm.modulate(&bits);
+
+        // Create a stream with padding
+        let mut stream = vec![IQSample::new(0.0, 0.0); 4000];
+        stream.extend_from_slice(&message_samples);
+        stream.extend(vec![IQSample::new(0.0, 0.0); 4000]);
+
+        // Decode the stream
+        let messages = ppm.decode_stream(&stream);
+
+        // Should find the message
+        assert_eq!(messages.len(), 1, "Should decode exactly one message");
+        assert!(messages[0].crc_valid, "CRC should be valid");
+        assert_eq!(messages[0].icao_address, 0x4840D6, "ICAO address should match");
+    }
+
+    #[test]
+    fn test_multiple_messages_in_stream() {
+        // Use 8 MHz sample rate for reliable detection
+        let ppm = PPM::adsb(8_000_000.0);
+
+        // Two different messages
+        let msg1: [u8; 14] = [
+            0x8D, 0x48, 0x40, 0xD6, 0x20, 0x2C, 0xC3, 0x71,
+            0xC3, 0x2C, 0xE0, 0x57, 0x60, 0x98,
+        ];
+        let msg2: [u8; 14] = [
+            0x8D, 0x40, 0x62, 0x1D, 0x58, 0xC3, 0x82, 0xD6,
+            0x90, 0xC8, 0xAC, 0x28, 0x63, 0xA7,
+        ];
+
+        let to_bits = |bytes: &[u8; 14]| -> Vec<u8> {
+            let mut bits = Vec::with_capacity(112);
+            for byte in bytes {
+                for i in (0..8).rev() {
+                    bits.push((byte >> i) & 1);
+                }
+            }
+            bits
+        };
+
+        let samples1 = ppm.modulate(&to_bits(&msg1));
+        let samples2 = ppm.modulate(&to_bits(&msg2));
+
+        // Create stream with both messages separated by silence
+        let mut stream = vec![IQSample::new(0.0, 0.0); 2000];
+        stream.extend_from_slice(&samples1);
+        stream.extend(vec![IQSample::new(0.0, 0.0); 4000]);
+        stream.extend_from_slice(&samples2);
+        stream.extend(vec![IQSample::new(0.0, 0.0); 2000]);
+
+        // Decode
+        let messages = ppm.decode_stream(&stream);
+
+        // Should find both messages
+        assert_eq!(messages.len(), 2, "Should decode two messages");
+
+        let icaos: Vec<u32> = messages.iter().map(|m| m.icao_address).collect();
+        assert!(icaos.contains(&0x4840D6));
+        assert!(icaos.contains(&0x40621D));
     }
 }

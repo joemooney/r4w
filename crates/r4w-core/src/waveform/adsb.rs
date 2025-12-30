@@ -18,6 +18,7 @@
 //! - RTCA DO-260B
 //! - <https://mode-s.org/1090mhz/>
 
+use std::f64::consts::PI;
 use std::fmt;
 
 /// CRC-24 generator polynomial for Mode S
@@ -715,6 +716,235 @@ impl AdsbMessage {
     pub fn icao_hex(&self) -> String {
         format!("{:06X}", self.icao_address)
     }
+
+    /// Get CPR position data if this is a position message
+    pub fn cpr_position(&self) -> Option<CprPosition> {
+        match &self.content {
+            MessageContent::AirbornePosition {
+                cpr_lat,
+                cpr_lon,
+                cpr_odd,
+                altitude,
+                ..
+            } => Some(CprPosition {
+                lat_cpr: *cpr_lat,
+                lon_cpr: *cpr_lon,
+                odd: *cpr_odd,
+                altitude: *altitude,
+                surface: false,
+            }),
+            MessageContent::SurfacePosition {
+                cpr_lat,
+                cpr_lon,
+                cpr_odd,
+                ..
+            } => Some(CprPosition {
+                lat_cpr: *cpr_lat,
+                lon_cpr: *cpr_lon,
+                odd: *cpr_odd,
+                altitude: None,
+                surface: true,
+            }),
+            _ => None,
+        }
+    }
+}
+
+/// CPR (Compact Position Reporting) position data
+#[derive(Debug, Clone, Copy)]
+pub struct CprPosition {
+    /// Raw CPR latitude (17 bits)
+    pub lat_cpr: u32,
+    /// Raw CPR longitude (17 bits)
+    pub lon_cpr: u32,
+    /// Odd (true) or even (false) message
+    pub odd: bool,
+    /// Altitude in feet (if airborne)
+    pub altitude: Option<i32>,
+    /// Surface position flag
+    pub surface: bool,
+}
+
+/// Decoded geographic position
+#[derive(Debug, Clone, Copy)]
+pub struct Position {
+    /// Latitude in degrees
+    pub latitude: f64,
+    /// Longitude in degrees
+    pub longitude: f64,
+    /// Altitude in feet (if available)
+    pub altitude: Option<i32>,
+}
+
+/// CPR decoder for position resolution
+///
+/// ADS-B uses Compact Position Reporting which requires either:
+/// - Two messages (even and odd) for global decoding
+/// - One message + reference position for local decoding
+#[derive(Debug, Default)]
+pub struct CprDecoder {
+    /// Last even position message
+    even: Option<CprPosition>,
+    /// Last odd position message
+    odd: Option<CprPosition>,
+}
+
+impl CprDecoder {
+    /// Create a new CPR decoder
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Process a position message and attempt to decode position
+    ///
+    /// Returns decoded position if we have both even and odd messages
+    pub fn decode(&mut self, cpr: CprPosition) -> Option<Position> {
+        if cpr.odd {
+            self.odd = Some(cpr);
+        } else {
+            self.even = Some(cpr);
+        }
+
+        // Try global decode if we have both messages
+        if let (Some(even), Some(odd)) = (self.even, self.odd) {
+            self.decode_global(even, odd)
+        } else {
+            None
+        }
+    }
+
+    /// Decode position using reference location (local decode)
+    ///
+    /// More accurate when aircraft is within 180 NM of reference
+    pub fn decode_local(
+        &self,
+        cpr: CprPosition,
+        ref_lat: f64,
+        ref_lon: f64,
+    ) -> Option<Position> {
+        let dlat = if cpr.surface { 90.0 / 60.0 } else { 360.0 / 60.0 };
+        let dlon_base = if cpr.surface { 90.0 } else { 360.0 };
+
+        let j = (ref_lat / dlat).floor()
+            + ((ref_lat % dlat) / dlat - (cpr.lat_cpr as f64) / 131072.0 + 0.5).floor();
+        let lat = dlat * (j + (cpr.lat_cpr as f64) / 131072.0);
+
+        let nl = nl_lat(lat);
+        let ni = if cpr.odd { nl - 1.0 } else { nl };
+        let ni = ni.max(1.0);
+        let dlon = dlon_base / ni;
+
+        let m = (ref_lon / dlon).floor()
+            + ((ref_lon % dlon) / dlon - (cpr.lon_cpr as f64) / 131072.0 + 0.5).floor();
+        let lon = dlon * (m + (cpr.lon_cpr as f64) / 131072.0);
+
+        Some(Position {
+            latitude: lat,
+            longitude: normalize_longitude(lon),
+            altitude: cpr.altitude,
+        })
+    }
+
+    /// Decode position using even/odd message pair (global decode)
+    fn decode_global(&self, even: CprPosition, odd: CprPosition) -> Option<Position> {
+        // CPR latitude/longitude are 17-bit values
+        let lat_cpr_even = even.lat_cpr as f64 / 131072.0;
+        let lat_cpr_odd = odd.lat_cpr as f64 / 131072.0;
+        let lon_cpr_even = even.lon_cpr as f64 / 131072.0;
+        let lon_cpr_odd = odd.lon_cpr as f64 / 131072.0;
+
+        // Zone sizes
+        let dlat_even = if even.surface { 90.0 / 60.0 } else { 360.0 / 60.0 };
+        let dlat_odd = if odd.surface { 90.0 / 59.0 } else { 360.0 / 59.0 };
+
+        // Latitude zone index
+        let j = (59.0 * lat_cpr_even - 60.0 * lat_cpr_odd + 0.5).floor();
+
+        // Latitude candidates
+        let mut lat_even = dlat_even * (j % 60.0 + lat_cpr_even);
+        let mut lat_odd = dlat_odd * (j % 59.0 + lat_cpr_odd);
+
+        // Normalize latitudes to [-90, 90]
+        if lat_even >= 270.0 {
+            lat_even -= 360.0;
+        }
+        if lat_odd >= 270.0 {
+            lat_odd -= 360.0;
+        }
+
+        // Check zone consistency
+        let nl_even = nl_lat(lat_even);
+        let nl_odd = nl_lat(lat_odd);
+
+        if nl_even != nl_odd {
+            // Zone mismatch - positions are too far apart in time
+            return None;
+        }
+
+        // Use the most recent message for final position
+        let (lat, lon_cpr, is_odd) = if odd.odd {
+            (lat_odd, lon_cpr_odd, true)
+        } else {
+            (lat_even, lon_cpr_even, false)
+        };
+
+        // Longitude zone count
+        let nl = nl_lat(lat);
+        let ni = if is_odd {
+            (nl - 1.0).max(1.0)
+        } else {
+            nl.max(1.0)
+        };
+
+        let dlon = if even.surface { 90.0 / ni } else { 360.0 / ni };
+
+        // Longitude zone index
+        let m = (lon_cpr_even * (nl - 1.0) - lon_cpr_odd * nl + 0.5).floor();
+
+        let lon = dlon * (m % ni + lon_cpr);
+
+        Some(Position {
+            latitude: lat,
+            longitude: normalize_longitude(lon),
+            altitude: odd.altitude.or(even.altitude),
+        })
+    }
+
+    /// Clear stored positions
+    pub fn reset(&mut self) {
+        self.even = None;
+        self.odd = None;
+    }
+}
+
+/// Calculate NL (number of longitude zones) for a given latitude
+fn nl_lat(lat: f64) -> f64 {
+    if lat.abs() >= 87.0 {
+        return 1.0;
+    }
+
+    let lat_rad = lat.abs() * PI / 180.0;
+    let nz = 15.0; // Number of latitude zones (60 for even, 59 for odd)
+
+    let a = 1.0 - (1.0 - (PI / (2.0 * nz)).cos()) / lat_rad.cos().powi(2);
+
+    if a < 0.0 {
+        1.0
+    } else {
+        (2.0 * PI / a.acos()).floor()
+    }
+}
+
+/// Normalize longitude to [-180, 180]
+fn normalize_longitude(lon: f64) -> f64 {
+    let mut lon = lon;
+    while lon > 180.0 {
+        lon -= 360.0;
+    }
+    while lon < -180.0 {
+        lon += 360.0;
+    }
+    lon
 }
 
 impl fmt::Display for AdsbMessage {
@@ -862,5 +1092,75 @@ mod tests {
         assert_eq!(AdsbMessage::adsb_char(26), 'Z');
         assert_eq!(AdsbMessage::adsb_char(48), '0');
         assert_eq!(AdsbMessage::adsb_char(57), '9');
+    }
+
+    #[test]
+    fn test_cpr_position_extraction() {
+        // Position message with CPR data
+        let msg: [u8; 14] = [
+            0x8D, 0x40, 0x62, 0x1D, 0x58, 0xC3, 0x82, 0xD6,
+            0x90, 0xC8, 0xAC, 0x28, 0x63, 0xA7,
+        ];
+
+        let decoded = AdsbMessage::decode(&msg);
+        let cpr = decoded.cpr_position();
+
+        assert!(cpr.is_some());
+        let cpr = cpr.unwrap();
+        assert!(cpr.lat_cpr > 0);
+        assert!(cpr.lon_cpr > 0);
+    }
+
+    #[test]
+    fn test_cpr_decoder_needs_both_frames() {
+        let mut decoder = CprDecoder::new();
+
+        // Create a mock even frame
+        let even = CprPosition {
+            lat_cpr: 93000,
+            lon_cpr: 51000,
+            odd: false,
+            altitude: Some(35000),
+            surface: false,
+        };
+
+        // Single frame should not produce position
+        let pos = decoder.decode(even);
+        assert!(pos.is_none());
+
+        // Create a mock odd frame (different CPR values)
+        let odd = CprPosition {
+            lat_cpr: 74158,
+            lon_cpr: 50194,
+            odd: true,
+            altitude: Some(35000),
+            surface: false,
+        };
+
+        // Now we should get a position
+        let pos = decoder.decode(odd);
+        assert!(pos.is_some());
+    }
+
+    #[test]
+    fn test_nl_lat_function() {
+        // Test the NL function at various latitudes
+        assert_eq!(nl_lat(0.0), 59.0); // Equator
+        assert_eq!(nl_lat(87.0), 1.0); // Polar
+        assert_eq!(nl_lat(-87.0), 1.0); // Polar south
+
+        // Mid-latitudes should have intermediate values
+        let nl_40 = nl_lat(40.0);
+        assert!(nl_40 > 1.0 && nl_40 < 59.0);
+    }
+
+    #[test]
+    fn test_normalize_longitude() {
+        assert_eq!(normalize_longitude(0.0), 0.0);
+        assert_eq!(normalize_longitude(180.0), 180.0);
+        assert_eq!(normalize_longitude(-180.0), -180.0);
+        assert_eq!(normalize_longitude(360.0), 0.0);
+        assert_eq!(normalize_longitude(-360.0), 0.0);
+        assert_eq!(normalize_longitude(270.0), -90.0);
     }
 }

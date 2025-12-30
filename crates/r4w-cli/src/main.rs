@@ -15,6 +15,8 @@ use r4w_core::benchmark::{BenchmarkMetrics, BenchmarkReceiver, BenchmarkReport, 
 use r4w_core::demodulation::Demodulator;
 use r4w_core::mesh::{LoRaMesh, LoRaMeshConfig, MeshPhy, ModemPreset, NodeId, Region};
 use r4w_core::modulation::Modulator;
+use r4w_core::waveform::adsb::{AdsbMessage, CprDecoder};
+use r4w_core::waveform::ppm::PPM;
 use r4w_core::params::LoRaParams;
 use r4w_core::types::IQSample;
 use r4w_core::waveform::{CommonParams, WaveformFactory};
@@ -327,6 +329,12 @@ enum Commands {
         #[command(subcommand)]
         command: MeshCommand,
     },
+
+    /// ADS-B aircraft tracking commands
+    Adsb {
+        #[command(subcommand)]
+        command: AdsbCommand,
+    },
 }
 
 #[derive(Subcommand)]
@@ -484,6 +492,61 @@ enum MeshCommand {
 
     /// Show available presets and regions
     Info,
+}
+
+#[derive(Subcommand)]
+enum AdsbCommand {
+    /// Decode a raw ADS-B message (hex format)
+    Decode {
+        /// Raw message in hex (e.g., "8D4840D6202CC371C32CE0576098")
+        #[arg(short, long)]
+        message: String,
+
+        /// Show raw bit fields
+        #[arg(short, long)]
+        verbose: bool,
+    },
+
+    /// Decode ADS-B messages from I/Q sample file
+    File {
+        /// Input file with I/Q samples
+        #[arg(short, long)]
+        input: PathBuf,
+
+        /// Sample rate in Hz
+        #[arg(short, long, default_value = "2000000")]
+        sample_rate: f64,
+
+        /// Show all messages (including CRC failures)
+        #[arg(long)]
+        all: bool,
+    },
+
+    /// Show ADS-B protocol information
+    Info,
+
+    /// Generate a test ADS-B signal
+    Generate {
+        /// Output file for I/Q samples
+        #[arg(short, long, default_value = "adsb_test.iq")]
+        output: PathBuf,
+
+        /// ICAO address (hex)
+        #[arg(long, default_value = "AABBCC")]
+        icao: String,
+
+        /// Callsign (8 chars max)
+        #[arg(long, default_value = "TEST1234")]
+        callsign: String,
+
+        /// Altitude in feet
+        #[arg(long, default_value = "35000")]
+        altitude: i32,
+
+        /// Sample rate in Hz
+        #[arg(short, long, default_value = "2000000")]
+        sample_rate: f64,
+    },
 }
 
 fn validate_sf(sf: u8) -> Result<u8> {
@@ -1825,6 +1888,401 @@ fn cmd_mesh_info() -> Result<()> {
     Ok(())
 }
 
+fn cmd_adsb_decode(message: String, verbose: bool) -> Result<()> {
+    // Parse hex string to bytes
+    let hex = message.trim().replace(" ", "").replace("0x", "");
+    if hex.len() != 28 {
+        anyhow::bail!(
+            "Invalid message length: {} chars (expected 28 hex chars = 14 bytes = 112 bits)",
+            hex.len()
+        );
+    }
+
+    let mut bytes = [0u8; 14];
+    for (i, chunk) in hex.as_bytes().chunks(2).enumerate() {
+        let s = std::str::from_utf8(chunk).context("Invalid hex character")?;
+        bytes[i] = u8::from_str_radix(s, 16).context("Invalid hex value")?;
+    }
+
+    let msg = AdsbMessage::decode(&bytes);
+
+    println!("=== ADS-B Message Decode ===");
+    println!();
+    println!("Raw:      {}", hex.to_uppercase());
+    println!("CRC:      {}", if msg.crc_valid { "VALID" } else { "INVALID" });
+    println!();
+    println!("Downlink Format: {:?} (DF{})", msg.downlink_format, bytes[0] >> 3);
+    println!("Capability:      {}", msg.capability);
+    println!("ICAO Address:    {} ({})", msg.icao_hex(), msg.icao_address);
+    println!("Type Code:       {:?}", msg.type_code);
+    println!();
+
+    match &msg.content {
+        r4w_core::waveform::adsb::MessageContent::Identification { callsign, category } => {
+            println!("Message Type: Aircraft Identification");
+            println!("  Callsign:  {}", callsign);
+            println!("  Category:  {:?}", category);
+        }
+        r4w_core::waveform::adsb::MessageContent::AirbornePosition {
+            altitude,
+            cpr_lat,
+            cpr_lon,
+            cpr_odd,
+            surveillance_status,
+            ..
+        } => {
+            println!("Message Type: Airborne Position");
+            if let Some(alt) = altitude {
+                println!("  Altitude:  {} ft", alt);
+            } else {
+                println!("  Altitude:  Unknown");
+            }
+            println!("  CPR Frame: {}", if *cpr_odd { "Odd" } else { "Even" });
+            println!("  CPR Lat:   {}", cpr_lat);
+            println!("  CPR Lon:   {}", cpr_lon);
+            println!("  Surv Stat: {}", surveillance_status);
+            println!();
+            println!("Note: Full position requires both even and odd messages.");
+        }
+        r4w_core::waveform::adsb::MessageContent::AirborneVelocity {
+            subtype,
+            heading,
+            ground_speed,
+            vertical_rate,
+            vr_source,
+        } => {
+            println!("Message Type: Airborne Velocity (subtype {})", subtype);
+            if let Some(gs) = ground_speed {
+                println!("  Ground Speed: {:.1} kts", gs);
+            }
+            if let Some(hdg) = heading {
+                println!("  Heading:      {:.1}°", hdg);
+            }
+            if let Some(vr) = vertical_rate {
+                println!(
+                    "  Vertical Rate: {} ft/min ({})",
+                    vr,
+                    if *vr_source == 0 { "GNSS" } else { "Baro" }
+                );
+            }
+        }
+        r4w_core::waveform::adsb::MessageContent::SurfacePosition {
+            ground_speed,
+            track,
+            cpr_odd,
+            ..
+        } => {
+            println!("Message Type: Surface Position");
+            if let Some(gs) = ground_speed {
+                println!("  Ground Speed: {:.1} kts", gs);
+            }
+            if let Some(trk) = track {
+                println!("  Track:        {:.1}°", trk);
+            }
+            println!("  CPR Frame:    {}", if *cpr_odd { "Odd" } else { "Even" });
+        }
+        r4w_core::waveform::adsb::MessageContent::AircraftStatus { emergency, squawk } => {
+            println!("Message Type: Aircraft Status");
+            println!("  Squawk:    {:04}", squawk);
+            println!("  Emergency: {}", emergency);
+        }
+        r4w_core::waveform::adsb::MessageContent::OperationalStatus {
+            version,
+            nic_supplement,
+            nac_p,
+            sil,
+            ..
+        } => {
+            println!("Message Type: Operational Status");
+            println!("  Version:      {}", version);
+            println!("  NIC Supp:     {}", nic_supplement);
+            println!("  NAC-P:        {}", nac_p);
+            println!("  SIL:          {}", sil);
+        }
+        r4w_core::waveform::adsb::MessageContent::Unknown { me_data } => {
+            println!("Message Type: Unknown/Reserved");
+            println!("  ME Data:   {:02X?}", me_data);
+        }
+    }
+
+    if verbose {
+        println!();
+        println!("Raw Bytes:");
+        for (i, byte) in bytes.iter().enumerate() {
+            println!("  Byte {:2}: {:02X} ({:08b})", i, byte, byte);
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_adsb_file(input: PathBuf, sample_rate: f64, show_all: bool) -> Result<()> {
+    let samples = read_samples_f32(&input)?;
+
+    println!("=== ADS-B I/Q File Decoder ===");
+    println!();
+    println!("File:        {:?}", input);
+    println!("Samples:     {}", samples.len());
+    println!("Sample Rate: {} Hz", sample_rate);
+    println!(
+        "Duration:    {:.3} s",
+        samples.len() as f64 / sample_rate
+    );
+    println!();
+
+    let ppm = PPM::adsb(sample_rate);
+    let messages = ppm.decode_stream(&samples);
+
+    if messages.is_empty() {
+        println!("No ADS-B messages found in file.");
+        if !show_all {
+            println!("Try --all to include messages with CRC errors.");
+        }
+        return Ok(());
+    }
+
+    println!("Found {} valid message(s):", messages.len());
+    println!();
+    println!(
+        "{:<10} {:<12} {:<20} {:<30}",
+        "ICAO", "Type", "Callsign/Alt", "Details"
+    );
+    println!("{}", "-".repeat(72));
+
+    let mut cpr_decoder = CprDecoder::new();
+
+    for msg in &messages {
+        if !msg.crc_valid && !show_all {
+            continue;
+        }
+
+        let type_str = match &msg.content {
+            r4w_core::waveform::adsb::MessageContent::Identification { .. } => "ID",
+            r4w_core::waveform::adsb::MessageContent::AirbornePosition { .. } => "Position",
+            r4w_core::waveform::adsb::MessageContent::AirborneVelocity { .. } => "Velocity",
+            r4w_core::waveform::adsb::MessageContent::SurfacePosition { .. } => "Surface",
+            r4w_core::waveform::adsb::MessageContent::AircraftStatus { .. } => "Status",
+            r4w_core::waveform::adsb::MessageContent::OperationalStatus { .. } => "OpStatus",
+            r4w_core::waveform::adsb::MessageContent::Unknown { .. } => "Unknown",
+        };
+
+        let info = match &msg.content {
+            r4w_core::waveform::adsb::MessageContent::Identification { callsign, .. } => {
+                callsign.clone()
+            }
+            r4w_core::waveform::adsb::MessageContent::AirbornePosition { altitude, .. } => {
+                altitude
+                    .map(|a| format!("{} ft", a))
+                    .unwrap_or_else(|| "N/A".to_string())
+            }
+            r4w_core::waveform::adsb::MessageContent::AirborneVelocity {
+                ground_speed,
+                heading,
+                ..
+            } => {
+                let gs = ground_speed
+                    .map(|g| format!("{:.0} kts", g))
+                    .unwrap_or_default();
+                let hdg = heading
+                    .map(|h| format!("{:.0}°", h))
+                    .unwrap_or_default();
+                format!("{} {}", gs, hdg)
+            }
+            r4w_core::waveform::adsb::MessageContent::AircraftStatus { squawk, .. } => {
+                format!("Squawk {:04}", squawk)
+            }
+            _ => String::new(),
+        };
+
+        // Try to decode position
+        let pos_str = if let Some(cpr) = msg.cpr_position() {
+            if let Some(pos) = cpr_decoder.decode(cpr) {
+                format!("({:.4}, {:.4})", pos.latitude, pos.longitude)
+            } else {
+                String::new()
+            }
+        } else {
+            String::new()
+        };
+
+        let crc_marker = if msg.crc_valid { "" } else { " [CRC!]" };
+
+        println!(
+            "{:<10} {:<12} {:<20} {}{}",
+            msg.icao_hex(),
+            type_str,
+            info,
+            pos_str,
+            crc_marker
+        );
+    }
+
+    Ok(())
+}
+
+fn cmd_adsb_info() -> Result<()> {
+    println!("=== ADS-B Protocol Information ===");
+    println!();
+    println!("ADS-B (Automatic Dependent Surveillance-Broadcast)");
+    println!("---------------------------------------------------");
+    println!();
+    println!("Frequency:   1090 MHz (Mode S Extended Squitter)");
+    println!("Data Rate:   1 Mbps");
+    println!("Modulation:  PPM (Pulse Position Modulation)");
+    println!("Message:     112 bits (56 bits short)");
+    println!("CRC:         24-bit");
+    println!();
+    println!("Message Structure (112-bit Extended Squitter):");
+    println!("  DF    (5 bits)  - Downlink Format (17 = ADS-B)");
+    println!("  CA    (3 bits)  - Capability");
+    println!("  ICAO  (24 bits) - Aircraft Address");
+    println!("  ME    (56 bits) - Message (Type Code + Data)");
+    println!("  PI    (24 bits) - Parity/CRC");
+    println!();
+    println!("Type Codes:");
+    println!("  TC 1-4   - Aircraft Identification (Callsign)");
+    println!("  TC 5-8   - Surface Position");
+    println!("  TC 9-18  - Airborne Position (Baro Altitude)");
+    println!("  TC 19    - Airborne Velocity");
+    println!("  TC 20-22 - Airborne Position (GNSS Altitude)");
+    println!("  TC 28    - Aircraft Status (Emergency/Squawk)");
+    println!("  TC 29    - Target State and Status");
+    println!("  TC 31    - Operational Status");
+    println!();
+    println!("Position Encoding (CPR - Compact Position Reporting):");
+    println!("  - Uses alternating even/odd frames");
+    println!("  - Global decode: requires both even and odd messages");
+    println!("  - Local decode: single message + reference position");
+    println!("  - Resolution: ~5 meters");
+    println!();
+    println!("Examples:");
+    println!("  r4w adsb decode -m 8D4840D6202CC371C32CE0576098");
+    println!("  r4w adsb file -i capture.iq -s 2000000");
+    println!("  r4w adsb generate -o test.iq --callsign N12345");
+
+    Ok(())
+}
+
+fn cmd_adsb_generate(
+    output: PathBuf,
+    icao: String,
+    callsign: String,
+    altitude: i32,
+    sample_rate: f64,
+) -> Result<()> {
+    use r4w_core::waveform::adsb::crc24;
+    use r4w_core::waveform::Waveform;
+
+    // Parse ICAO address
+    let icao_hex = icao.trim().replace("0x", "");
+    let icao_addr = u32::from_str_radix(&icao_hex, 16)
+        .with_context(|| format!("Invalid ICAO address: {}", icao))?;
+
+    if icao_addr > 0xFFFFFF {
+        anyhow::bail!("ICAO address must be 24 bits (6 hex digits)");
+    }
+
+    println!("=== ADS-B Test Signal Generator ===");
+    println!();
+    println!("ICAO:     {:06X}", icao_addr);
+    println!("Callsign: {}", callsign);
+    println!("Altitude: {} ft", altitude);
+    println!("Output:   {:?}", output);
+    println!();
+
+    // Build aircraft identification message (TC=4, CA=0)
+    // DF17 = 0x8D (DF=17, CA=5 for airborne)
+    let df_ca = 0x8Du8;
+
+    // Type code 4 for aircraft identification, category 0
+    let tc_ca = (4 << 3) | 0; // TC=4, CA=0
+
+    // Encode callsign (8 chars, 6 bits each)
+    let callsign_padded = format!("{:<8}", callsign.to_uppercase());
+    let chars: Vec<u8> = callsign_padded
+        .chars()
+        .take(8)
+        .map(|c| match c {
+            'A'..='Z' => c as u8 - b'A' + 1,
+            '0'..='9' => c as u8 - b'0' + 48,
+            ' ' => 0,
+            _ => 0,
+        })
+        .collect();
+
+    // Pack callsign into 6 bytes (48 bits)
+    let mut me_bytes = [0u8; 7];
+    me_bytes[0] = tc_ca;
+
+    // Pack 8 chars * 6 bits = 48 bits into bytes 1-6
+    let mut bit_pos = 8; // Start after TC/CA byte
+    for &ch in &chars {
+        let byte_idx = bit_pos / 8;
+        let bit_offset = bit_pos % 8;
+
+        if bit_offset <= 2 {
+            me_bytes[byte_idx] |= ch << (2 - bit_offset);
+        } else {
+            me_bytes[byte_idx] |= ch >> (bit_offset - 2);
+            if byte_idx + 1 < 7 {
+                me_bytes[byte_idx + 1] |= ch << (10 - bit_offset);
+            }
+        }
+        bit_pos += 6;
+    }
+
+    // Build full message
+    let mut msg_bytes = [0u8; 14];
+    msg_bytes[0] = df_ca;
+    msg_bytes[1] = ((icao_addr >> 16) & 0xFF) as u8;
+    msg_bytes[2] = ((icao_addr >> 8) & 0xFF) as u8;
+    msg_bytes[3] = (icao_addr & 0xFF) as u8;
+    msg_bytes[4..11].copy_from_slice(&me_bytes);
+
+    // Calculate CRC
+    let crc = crc24(&msg_bytes);
+    msg_bytes[11] = ((crc >> 16) & 0xFF) as u8;
+    msg_bytes[12] = ((crc >> 8) & 0xFF) as u8;
+    msg_bytes[13] = (crc & 0xFF) as u8;
+
+    // Convert to bits
+    let mut bits = Vec::with_capacity(112);
+    for byte in &msg_bytes {
+        for i in (0..8).rev() {
+            bits.push((byte >> i) & 1);
+        }
+    }
+
+    // Modulate
+    let ppm = PPM::adsb(sample_rate);
+    let samples = ppm.modulate(&bits);
+
+    println!(
+        "Generated {} samples ({:.3} ms)",
+        samples.len(),
+        samples.len() as f64 / sample_rate * 1000.0
+    );
+
+    // Verify message
+    let msg = AdsbMessage::decode(&msg_bytes);
+    println!();
+    println!("Message:  {}", msg);
+    println!(
+        "Hex:      {}",
+        msg_bytes
+            .iter()
+            .map(|b| format!("{:02X}", b))
+            .collect::<String>()
+    );
+
+    // Write samples
+    write_samples_f32(&samples, &output)?;
+    println!();
+    println!("Wrote samples to {:?}", output);
+
+    Ok(())
+}
+
 fn cmd_remote(address: String, command: RemoteCommand) -> Result<()> {
     // Parse address
     let (host, port) = if address.contains(':') {
@@ -2061,6 +2519,26 @@ fn main() -> Result<()> {
             } => cmd_mesh_simulate(nodes, messages, snr, preset, region, verbose),
 
             MeshCommand::Info => cmd_mesh_info(),
+        },
+
+        Commands::Adsb { command } => match command {
+            AdsbCommand::Decode { message, verbose } => cmd_adsb_decode(message, verbose),
+
+            AdsbCommand::File {
+                input,
+                sample_rate,
+                all,
+            } => cmd_adsb_file(input, sample_rate, all),
+
+            AdsbCommand::Info => cmd_adsb_info(),
+
+            AdsbCommand::Generate {
+                output,
+                icao,
+                callsign,
+                altitude,
+                sample_rate,
+            } => cmd_adsb_generate(output, icao, callsign, altitude, sample_rate),
         },
     }
 }
