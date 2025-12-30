@@ -278,6 +278,45 @@ impl WasmInstance {
         })
     }
 
+    /// Call a function that takes an i32 and returns nothing.
+    pub fn call_void_i32(&mut self, name: &str, arg: i32) -> Result<WasmCallResult<()>> {
+        let func = self.get_typed_func::<i32, ()>(name)?;
+        let start = Instant::now();
+        let fuel_before = self.store.get_fuel().ok();
+
+        func.call(&mut self.store, arg)
+            .map_err(|e| SandboxError::WasmError(format!("call failed: {}", e)))?;
+
+        let fuel_after = self.store.get_fuel().ok();
+        let fuel_consumed = fuel_before.zip(fuel_after).map(|(b, a)| b - a);
+
+        Ok(WasmCallResult {
+            value: (),
+            execution_time_us: start.elapsed().as_micros() as u64,
+            fuel_consumed,
+        })
+    }
+
+    /// Call a function with two i32 args and returns i32.
+    pub fn call_i32_i32_i32(&mut self, name: &str, a: i32, b: i32) -> Result<WasmCallResult<i32>> {
+        let func = self.get_typed_func::<(i32, i32), i32>(name)?;
+        let start = Instant::now();
+        let fuel_before = self.store.get_fuel().ok();
+
+        let value = func
+            .call(&mut self.store, (a, b))
+            .map_err(|e| SandboxError::WasmError(format!("call failed: {}", e)))?;
+
+        let fuel_after = self.store.get_fuel().ok();
+        let fuel_consumed = fuel_before.zip(fuel_after).map(|(b, a)| b - a);
+
+        Ok(WasmCallResult {
+            value,
+            execution_time_us: start.elapsed().as_micros() as u64,
+            fuel_consumed,
+        })
+    }
+
     /// Call a function with two i32 args (pointer, length) and returns i32 (result pointer).
     /// Useful for processing arrays like sample buffers.
     pub fn call_buffer(&mut self, name: &str, ptr: i32, len: i32) -> Result<WasmCallResult<i32>> {

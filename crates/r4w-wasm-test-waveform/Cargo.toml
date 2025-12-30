@@ -1,0 +1,17 @@
+[package]
+name = "r4w-wasm-test-waveform"
+version = "0.1.0"
+edition = "2021"
+description = "Test waveform for WASM sandbox validation"
+
+# Standalone crate - not part of main workspace (different target)
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+
+[profile.release]
+opt-level = "s"
+lto = true
