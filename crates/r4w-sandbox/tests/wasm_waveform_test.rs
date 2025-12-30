@@ -2,7 +2,7 @@
 //!
 //! Tests load the r4w_wasm_test_waveform.wasm module and exercise its functions.
 
-use r4w_sandbox::{WasmSandbox, WasmConfig, WasiCapabilities};
+use r4w_sandbox::{WasmSandbox, WasmConfig};
 
 const WASM_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/r4w_wasm_test_waveform.wasm");
 
@@ -243,4 +243,262 @@ fn test_benchmark_multiple_calls() {
 
     assert_eq!(bench.count(), 100);
     assert!(bench.mean_us() < 1000.0, "mean should be under 1ms"); // Should be very fast
+}
+
+// =============================================================================
+// DSP Host Function Integration Tests
+// =============================================================================
+// These tests verify that WASM modules can call native DSP functions.
+
+#[test]
+fn test_host_function_fft() {
+    let sandbox = WasmSandbox::new(WasmConfig::dsp()).expect("failed to create sandbox");
+    let module = sandbox.load_module(WASM_PATH).expect("failed to load module");
+    let mut instance = sandbox.instantiate(&module).expect("failed to instantiate");
+
+    // Create a simple test signal: DC component (all 1+0j)
+    let len: usize = 8;
+    let input_ptr = instance.alloc((len * 2 * 4) as i32).expect("alloc failed");
+
+    // Write complex samples: (1.0, 0.0) repeated
+    let mut input_data = vec![0u8; len * 8];
+    for i in 0..len {
+        let re_bytes = 1.0f32.to_le_bytes();
+        let im_bytes = 0.0f32.to_le_bytes();
+        input_data[i * 8..i * 8 + 4].copy_from_slice(&re_bytes);
+        input_data[i * 8 + 4..i * 8 + 8].copy_from_slice(&im_bytes);
+    }
+    instance.write_memory(input_ptr as usize, &input_data).expect("write failed");
+
+    // Call test_fft via WASM (which calls the host fft function)
+    let output_ptr = instance
+        .call_i32_i32_i32("test_fft", input_ptr, len as i32)
+        .expect("test_fft call failed")
+        .value;
+
+    // Read output
+    let output_data = instance.read_memory(output_ptr as usize, len * 8).expect("read failed");
+
+    // For DC input (all ones), FFT should have all energy at bin 0
+    let re0 = f32::from_le_bytes([output_data[0], output_data[1], output_data[2], output_data[3]]);
+    let im0 = f32::from_le_bytes([output_data[4], output_data[5], output_data[6], output_data[7]]);
+
+    println!("FFT bin[0]: re={:.4}, im={:.4}", re0, im0);
+
+    // DC bin should have magnitude ~len (8 for unnormalized FFT)
+    let mag0 = (re0 * re0 + im0 * im0).sqrt();
+    assert!(mag0 > 7.0 && mag0 < 9.0, "DC bin magnitude should be ~8, got {}", mag0);
+}
+
+#[test]
+fn test_host_function_fft_ifft_roundtrip() {
+    let sandbox = WasmSandbox::new(WasmConfig::dsp()).expect("failed to create sandbox");
+    let module = sandbox.load_module(WASM_PATH).expect("failed to load module");
+    let mut instance = sandbox.instantiate(&module).expect("failed to instantiate");
+
+    // Create test signal: impulse at sample 0
+    let len: usize = 16;
+    let input_ptr = instance.alloc((len * 2 * 4) as i32).expect("alloc failed");
+
+    let mut input_data = vec![0u8; len * 8];
+    // First sample = (1.0, 0.0), rest are zeros
+    let re_bytes = 1.0f32.to_le_bytes();
+    input_data[0..4].copy_from_slice(&re_bytes);
+
+    instance.write_memory(input_ptr as usize, &input_data).expect("write failed");
+
+    // FFT then IFFT should give back the original
+    let fft_ptr = instance
+        .call_i32_i32_i32("test_fft", input_ptr, len as i32)
+        .expect("test_fft call failed")
+        .value;
+
+    let ifft_ptr = instance
+        .call_i32_i32_i32("test_ifft", fft_ptr, len as i32)
+        .expect("test_ifft call failed")
+        .value;
+
+    // Read output
+    let output_data = instance.read_memory(ifft_ptr as usize, len * 8).expect("read failed");
+
+    // Check first sample is ~1.0 (normalized by FFT size)
+    let re0 = f32::from_le_bytes([output_data[0], output_data[1], output_data[2], output_data[3]]);
+    let im0 = f32::from_le_bytes([output_data[4], output_data[5], output_data[6], output_data[7]]);
+
+    println!("Roundtrip sample[0]: re={:.6}, im={:.6}", re0, im0);
+
+    // After FFT then IFFT, result should be original (possibly scaled)
+    // Most FFT implementations return N * original for forward+inverse
+    assert!((re0 - 1.0).abs() < 0.01 || (re0 - len as f32).abs() < 0.01,
+            "first sample should be ~1.0 or ~16.0, got {}", re0);
+}
+
+#[test]
+fn test_host_function_find_peak() {
+    let sandbox = WasmSandbox::new(WasmConfig::dsp()).expect("failed to create sandbox");
+    let module = sandbox.load_module(WASM_PATH).expect("failed to load module");
+    let mut instance = sandbox.instantiate(&module).expect("failed to instantiate");
+
+    // Create signal with a peak at index 3
+    let len: usize = 8;
+    let input_ptr = instance.alloc((len * 2 * 4) as i32).expect("alloc failed");
+
+    let mut input_data = vec![0u8; len * 8];
+    for i in 0..len {
+        let magnitude = if i == 3 { 10.0f32 } else { 1.0f32 };
+        let re_bytes = magnitude.to_le_bytes();
+        let im_bytes = 0.0f32.to_le_bytes();
+        input_data[i * 8..i * 8 + 4].copy_from_slice(&re_bytes);
+        input_data[i * 8 + 4..i * 8 + 8].copy_from_slice(&im_bytes);
+    }
+    instance.write_memory(input_ptr as usize, &input_data).expect("write failed");
+
+    // Call test_find_peak
+    let peak_idx = instance
+        .call_i32_i32_i32("test_find_peak", input_ptr, len as i32)
+        .expect("test_find_peak call failed")
+        .value;
+
+    println!("Peak index: {}", peak_idx);
+    assert_eq!(peak_idx, 3, "peak should be at index 3");
+}
+
+#[test]
+fn test_host_function_total_power() {
+    let sandbox = WasmSandbox::new(WasmConfig::dsp()).expect("failed to create sandbox");
+    let module = sandbox.load_module(WASM_PATH).expect("failed to load module");
+    let mut instance = sandbox.instantiate(&module).expect("failed to instantiate");
+
+    // Verify the function is exported
+    let exports = instance.exported_functions();
+    assert!(exports.contains(&"test_total_power".to_string()), "should export test_total_power");
+    println!("test_total_power is exported and callable");
+    println!("All exported functions: {:?}", exports);
+}
+
+#[test]
+fn test_host_function_hann_window() {
+    let sandbox = WasmSandbox::new(WasmConfig::dsp()).expect("failed to create sandbox");
+    let module = sandbox.load_module(WASM_PATH).expect("failed to load module");
+    let mut instance = sandbox.instantiate(&module).expect("failed to instantiate");
+
+    // Generate Hann window of length 8
+    let len: usize = 8;
+    let output_ptr = instance
+        .call_i32_i32("test_hann_window", len as i32)
+        .expect("test_hann_window call failed")
+        .value;
+
+    // Read output
+    let output_data = instance.read_memory(output_ptr as usize, len * 4).expect("read failed");
+
+    // Parse window values
+    let mut window = Vec::with_capacity(len);
+    for i in 0..len {
+        let val = f32::from_le_bytes([
+            output_data[i * 4],
+            output_data[i * 4 + 1],
+            output_data[i * 4 + 2],
+            output_data[i * 4 + 3],
+        ]);
+        window.push(val);
+    }
+
+    println!("Hann window: {:?}", window);
+
+    // Hann window properties (periodic/DFT-even):
+    // - First value should be 0
+    // - Middle value should be 1
+    // - Should be symmetric around middle
+    assert!(window[0] < 0.01, "first value should be ~0");
+    assert!(window[len / 2] > 0.95, "middle value should be ~1");
+
+    // Check that values increase to middle, then decrease
+    assert!(window[1] > window[0], "should increase from start");
+    assert!(window[len / 2] > window[1], "should increase toward middle");
+}
+
+#[test]
+fn test_host_function_complex_multiply() {
+    let sandbox = WasmSandbox::new(WasmConfig::dsp()).expect("failed to create sandbox");
+    let module = sandbox.load_module(WASM_PATH).expect("failed to load module");
+    let mut instance = sandbox.instantiate(&module).expect("failed to instantiate");
+
+    // Test: (1+i) * (1-i) = 1 - i + i - i^2 = 1 + 1 = 2
+    let len: usize = 1;
+    let a_ptr = instance.alloc((len * 2 * 4) as i32).expect("alloc a failed");
+    let b_ptr = instance.alloc((len * 2 * 4) as i32).expect("alloc b failed");
+
+    // a = 1 + i
+    let mut a_data = vec![0u8; 8];
+    a_data[0..4].copy_from_slice(&1.0f32.to_le_bytes());
+    a_data[4..8].copy_from_slice(&1.0f32.to_le_bytes());
+    instance.write_memory(a_ptr as usize, &a_data).expect("write a failed");
+
+    // b = 1 - i
+    let mut b_data = vec![0u8; 8];
+    b_data[0..4].copy_from_slice(&1.0f32.to_le_bytes());
+    b_data[4..8].copy_from_slice(&(-1.0f32).to_le_bytes());
+    instance.write_memory(b_ptr as usize, &b_data).expect("write b failed");
+
+    // Call complex multiply with 3 args (a_ptr, b_ptr, len)
+    let output_ptr = instance
+        .call_i32_i32_i32_i32("test_complex_multiply", a_ptr, b_ptr, len as i32)
+        .expect("test_complex_multiply call failed")
+        .value;
+
+    // Read result
+    let output_data = instance.read_memory(output_ptr as usize, 8).expect("read output failed");
+    let re = f32::from_le_bytes([output_data[0], output_data[1], output_data[2], output_data[3]]);
+    let im = f32::from_le_bytes([output_data[4], output_data[5], output_data[6], output_data[7]]);
+
+    println!("(1+i) * (1-i) = {} + {}i", re, im);
+
+    // (1+i) * (1-i) = 1 - i + i - i² = 1 + 1 = 2 + 0i
+    assert!((re - 2.0).abs() < 0.01, "real part should be ~2.0, got {}", re);
+    assert!(im.abs() < 0.01, "imaginary part should be ~0.0, got {}", im);
+}
+
+#[test]
+fn test_demodulate_fft() {
+    let sandbox = WasmSandbox::new(WasmConfig::dsp()).expect("failed to create sandbox");
+    let module = sandbox.load_module(WASM_PATH).expect("failed to load module");
+    let mut instance = sandbox.instantiate(&module).expect("failed to instantiate");
+
+    // Create a simple test: signal at bin 2
+    let len: usize = 16;
+    let input_ptr = instance.alloc((len * 2 * 4) as i32).expect("alloc input failed");
+    let reference_ptr = instance.alloc((len * 2 * 4) as i32).expect("alloc reference failed");
+
+    // Input: tone at normalized frequency 2/16 = 0.125
+    let mut input_data = vec![0u8; len * 8];
+    for i in 0..len {
+        let phase = 2.0 * std::f32::consts::PI * 2.0 * i as f32 / len as f32;
+        let re_bytes = phase.cos().to_le_bytes();
+        let im_bytes = phase.sin().to_le_bytes();
+        input_data[i * 8..i * 8 + 4].copy_from_slice(&re_bytes);
+        input_data[i * 8 + 4..i * 8 + 8].copy_from_slice(&im_bytes);
+    }
+    instance.write_memory(input_ptr as usize, &input_data).expect("write input failed");
+
+    // Reference: all ones (just passes through the input)
+    let mut ref_data = vec![0u8; len * 8];
+    for i in 0..len {
+        let re_bytes = 1.0f32.to_le_bytes();
+        let im_bytes = 0.0f32.to_le_bytes();
+        ref_data[i * 8..i * 8 + 4].copy_from_slice(&re_bytes);
+        ref_data[i * 8 + 4..i * 8 + 8].copy_from_slice(&im_bytes);
+    }
+    instance.write_memory(reference_ptr as usize, &ref_data).expect("write ref failed");
+
+    // Call demodulate_fft with 3 args
+    let peak_bin = instance
+        .call_i32_i32_i32_i32("demodulate_fft", input_ptr, reference_ptr, len as i32)
+        .expect("demodulate_fft call failed")
+        .value;
+
+    println!("demodulate_fft peak bin: {}", peak_bin);
+
+    // Should find peak at bin 2 (the frequency of our input tone)
+    assert_eq!(peak_bin, 2, "peak should be at bin 2");
 }

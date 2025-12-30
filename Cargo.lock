@@ -4086,6 +4086,8 @@ dependencies = [
  "caps",
  "libc",
  "nix 0.29.0",
+ "num-complex",
+ "r4w-core",
  "r4w-fpga",
  "rand 0.8.5",
  "serde",

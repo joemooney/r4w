@@ -3,6 +3,7 @@
 //! Uses wasmtime-wasi preview1 for compatibility with standard WASM modules.
 
 use super::config::{WasmConfig, WasiCapabilities};
+use super::host_functions::DspHostFunctions;
 use crate::error::{Result, SandboxError};
 
 use std::path::Path;
@@ -142,6 +143,9 @@ impl WasmSandbox {
         let mut linker: Linker<WasmHostState> = Linker::new(&self.engine);
         wasmtime_wasi::preview1::add_to_linker_sync(&mut linker, |state| state.preview1())
             .map_err(|e| SandboxError::WasmError(format!("WASI link failed: {}", e)))?;
+
+        // Register DSP host functions (r4w_dsp namespace)
+        DspHostFunctions::register(&mut linker)?;
 
         // Instantiate the module
         let instance = linker
@@ -402,6 +406,47 @@ impl WasmInstance {
     /// Get remaining fuel (if fuel metering enabled).
     pub fn remaining_fuel(&self) -> Option<u64> {
         self.store.get_fuel().ok()
+    }
+
+    /// Call a function with three i32 args that returns i32.
+    pub fn call_i32_i32_i32_i32(
+        &mut self,
+        name: &str,
+        a: i32,
+        b: i32,
+        c: i32,
+    ) -> Result<WasmCallResult<i32>> {
+        let func = self.get_typed_func::<(i32, i32, i32), i32>(name)?;
+        let start = Instant::now();
+        let fuel_before = self.store.get_fuel().ok();
+
+        let value = func
+            .call(&mut self.store, (a, b, c))
+            .map_err(|e| SandboxError::WasmError(format!("call failed: {}", e)))?;
+
+        let fuel_after = self.store.get_fuel().ok();
+        let fuel_consumed = fuel_before.zip(fuel_after).map(|(b, a)| b - a);
+
+        Ok(WasmCallResult {
+            value,
+            execution_time_us: start.elapsed().as_micros() as u64,
+            fuel_consumed,
+        })
+    }
+
+    /// Get list of exported function names.
+    pub fn exported_functions(&mut self) -> Vec<String> {
+        // Collect names first to avoid borrow issues
+        let names: Vec<_> = self.instance.exports(&mut self.store).map(|e| e.name().to_string()).collect();
+        // Now check types
+        names
+            .into_iter()
+            .filter(|name| {
+                self.instance
+                    .get_func(&mut self.store, name)
+                    .is_some()
+            })
+            .collect()
     }
 }
 

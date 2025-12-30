@@ -33,9 +33,11 @@
 
 mod runtime;
 mod config;
+mod host_functions;
 
 pub use runtime::{WasmSandbox, WasmModule, WasmInstance, WasmCallResult, WasmBenchmark};
 pub use config::{WasmConfig, WasiCapabilities};
+pub use host_functions::DspHostFunctions;
 
 #[cfg(test)]
 mod tests;
