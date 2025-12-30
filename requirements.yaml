@@ -7,18 +7,26 @@ requirements:
   prefix_override: MESH
   title: Meshtastic Protocol Support
   description: Implement Meshtastic protocol for LoRa-based mesh networking with managed flood routing, CSMA/CA channel access, and interoperability with existing Meshtastic network (40,000+ nodes). This enables R4W to participate in the global off-grid mesh communication network.
-  status: Draft
+  status: InProgress
   priority: High
   owner: joe
   feature: 1-Mesh Networking
   created_at: 2025-12-30T18:31:20.703791380Z
-  modified_at: 2025-12-30T18:31:20.703791380Z
+  modified_at: 2025-12-30T18:54:37.847875523Z
   req_type: Epic
   tags:
-  - protocol
   - lora
-  - meshtastic
   - mesh
+  - meshtastic
+  - protocol
+  history:
+  - id: b87df4b0-b8f6-47cc-bf04-604b5362c7fc
+    author: CLI
+    timestamp: 2025-12-30T18:54:37.847874929Z
+    changes:
+    - field_name: status
+      old_value: Draft
+      new_value: InProgress
 - id: b1d0788a-b7fe-47e9-b2cc-89fb7aa0f77d
   spec_id: MESH-002
   prefix_override: MESH
@@ -33,8 +41,8 @@ requirements:
   req_type: Functional
   tags:
   - physical-layer
-  - lora
   - encoding
+  - lora
   relationships:
   - rel_type: Parent
     target_id: 00a8d98b-da52-4c20-8d69-f1f90facbfc3
@@ -52,9 +60,9 @@ requirements:
   modified_at: 2025-12-30T18:31:56.998874497Z
   req_type: Functional
   tags:
+  - csma
   - physical-layer
   - cad
-  - csma
   relationships:
   - rel_type: Parent
     target_id: 00a8d98b-da52-4c20-8d69-f1f90facbfc3
@@ -64,32 +72,40 @@ requirements:
   prefix_override: MESH
   title: Meshtastic Physical Layer - Regional Frequency Configuration
   description: 'Support Meshtastic regional frequency plans for ISM bands: US (902-928 MHz), EU (863-870 MHz), CN (470-510 MHz), JP (920-925 MHz), ANZ (915-928 MHz), KR (920-923 MHz), TW (920-925 MHz), IN (865-867 MHz). Include duty cycle limits where required by regulation.'
-  status: Draft
+  status: Completed
   priority: High
   owner: joe
   feature: 4-Mesh Networking
   created_at: 2025-12-30T18:32:06.357251909Z
-  modified_at: 2025-12-30T18:32:06.357251909Z
+  modified_at: 2025-12-30T18:54:27.733209443Z
   req_type: Functional
   tags:
-  - frequency
   - regulatory
   - physical-layer
+  - frequency
   relationships:
   - rel_type: Parent
     target_id: 00a8d98b-da52-4c20-8d69-f1f90facbfc3
     created_at: 2025-12-30T18:32:06.357269585Z
+  history:
+  - id: bd241115-5daa-47f2-a046-b572d8fe922b
+    author: CLI
+    timestamp: 2025-12-30T18:54:27.733209096Z
+    changes:
+    - field_name: status
+      old_value: Draft
+      new_value: Completed
 - id: 81817744-f3d2-467d-af15-101d1403d83a
   spec_id: MESH-005
   prefix_override: MESH
   title: Meshtastic MAC Layer - CSMA/CA with Contention Window
   description: 'Implement Carrier Sense Multiple Access with Collision Avoidance (CSMA/CA). Before transmission: 1) Perform CAD, 2) If busy, select random backoff from contention window (CW), 3) CW size scales with channel utilization - larger CW for higher utilization to reduce collision probability.'
-  status: Draft
+  status: Completed
   priority: High
   owner: joe
   feature: 5-Mesh Networking
   created_at: 2025-12-30T18:32:22.922084387Z
-  modified_at: 2025-12-30T18:32:22.922084387Z
+  modified_at: 2025-12-30T18:54:51.011274770Z
   req_type: Functional
   tags:
   - csma
@@ -99,17 +115,31 @@ requirements:
   - rel_type: Parent
     target_id: 00a8d98b-da52-4c20-8d69-f1f90facbfc3
     created_at: 2025-12-30T18:32:22.922105097Z
+  comments:
+  - id: b652feb2-b9ed-40b7-9f23-cd2b7bdbd417
+    author: joe
+    content: Implemented in crates/r4w-core/src/mesh/mac.rs - MacLayer with CsmaConfig, ChannelUtilization
+    created_at: 2025-12-30T18:54:51.011265630Z
+    modified_at: 2025-12-30T18:54:51.011265630Z
+  history:
+  - id: fcaf44b8-bbb2-40f5-b2aa-61db3d48128e
+    author: CLI
+    timestamp: 2025-12-30T18:54:27.738376450Z
+    changes:
+    - field_name: status
+      old_value: Draft
+      new_value: Completed
 - id: dd84386f-df00-41a6-ad83-17ae7b0e54d3
   spec_id: MESH-006
   prefix_override: MESH
   title: Meshtastic MAC Layer - Packet Framing
   description: 'Implement Meshtastic packet structure: Header (4 bytes: destination, sender, packet ID, flags), Payload (up to 237 bytes for standard, 233 for encrypted), optional MIC for authentication. Support both encrypted (AES-128/AES-256) and plaintext modes.'
-  status: Draft
+  status: Completed
   priority: High
   owner: joe
   feature: 6-Mesh Networking
   created_at: 2025-12-30T18:32:32.262592482Z
-  modified_at: 2025-12-30T18:32:32.262592482Z
+  modified_at: 2025-12-30T18:54:51.015773789Z
   req_type: Functional
   tags:
   - framing
@@ -119,106 +149,172 @@ requirements:
   - rel_type: Parent
     target_id: 00a8d98b-da52-4c20-8d69-f1f90facbfc3
     created_at: 2025-12-30T18:32:32.262611105Z
+  comments:
+  - id: 36e4e222-e96c-4135-a782-dde50f5c52f6
+    author: joe
+    content: Implemented in crates/r4w-core/src/mesh/packet.rs - MeshPacket, PacketHeader, PacketFlags
+    created_at: 2025-12-30T18:54:51.015769677Z
+    modified_at: 2025-12-30T18:54:51.015769677Z
+  history:
+  - id: 3ac5e4c2-cfe4-4a85-97c2-933870b6591d
+    author: CLI
+    timestamp: 2025-12-30T18:54:27.743706244Z
+    changes:
+    - field_name: status
+      old_value: Draft
+      new_value: Completed
 - id: 399daf87-07fe-4cfb-be9d-67f44be67b4a
   spec_id: MESH-007
   prefix_override: MESH
   title: Meshtastic MAC Layer - Channel Utilization Tracking
   description: 'Track channel utilization percentage over time. Use this metric to: 1) Adjust contention window size, 2) Report channel congestion to mesh routing layer, 3) Implement airtime fairness. Target maximum 10% duty cycle per node to maintain network scalability.'
-  status: Draft
+  status: Completed
   priority: Medium
   owner: joe
   feature: 7-Mesh Networking
   created_at: 2025-12-30T18:32:49.606873192Z
-  modified_at: 2025-12-30T18:32:49.606873192Z
+  modified_at: 2025-12-30T18:54:27.749015544Z
   req_type: Functional
   tags:
+  - fairness
   - utilization
   - mac-layer
-  - fairness
   relationships:
   - rel_type: Parent
     target_id: 00a8d98b-da52-4c20-8d69-f1f90facbfc3
     created_at: 2025-12-30T18:32:49.606889163Z
+  history:
+  - id: 0f034a1c-e30d-4145-8859-dd451d0e71dc
+    author: CLI
+    timestamp: 2025-12-30T18:54:27.749015292Z
+    changes:
+    - field_name: status
+      old_value: Draft
+      new_value: Completed
 - id: 9f6da67e-dfc1-4027-9e0a-4b279078bf5c
   spec_id: MESH-008
   prefix_override: MESH
   title: Meshtastic Mesh - Managed Flood Routing for Broadcasts
   description: 'Implement managed flood routing for broadcast messages: 1) Receive packet with HopLimit > 0, 2) Decrement HopLimit, 3) Wait random time based on SNR (low SNR = smaller wait, so distant nodes flood first), 4) Listen for rebroadcasts during wait, 5) If heard rebroadcast, cancel own rebroadcast, 6) Otherwise rebroadcast. Default HopLimit=3.'
-  status: Draft
+  status: Completed
   priority: High
   owner: joe
   feature: 8-Mesh Networking
   created_at: 2025-12-30T18:33:06.873322244Z
-  modified_at: 2025-12-30T18:33:06.873322244Z
+  modified_at: 2025-12-30T18:54:51.020338923Z
   req_type: Functional
   tags:
-  - flood
   - broadcast
   - routing
+  - flood
   relationships:
   - rel_type: Parent
     target_id: 00a8d98b-da52-4c20-8d69-f1f90facbfc3
     created_at: 2025-12-30T18:33:06.873334410Z
+  comments:
+  - id: 50181d91-a737-4886-a1a8-f413a4c1140b
+    author: joe
+    content: Implemented in crates/r4w-core/src/mesh/routing.rs - FloodRouter with SNR-based rebroadcast delay
+    created_at: 2025-12-30T18:54:51.020334416Z
+    modified_at: 2025-12-30T18:54:51.020334416Z
+  history:
+  - id: ad009f32-8a24-441f-b82f-6d07164a5ab8
+    author: CLI
+    timestamp: 2025-12-30T18:54:27.754569594Z
+    changes:
+    - field_name: status
+      old_value: Draft
+      new_value: Completed
 - id: c6e89949-d6fd-4e27-abea-45eb7a0dfdef
   spec_id: MESH-009
   prefix_override: MESH
   title: Meshtastic Mesh - Next-Hop Routing for Direct Messages
   description: 'Implement next-hop routing for direct (unicast) messages: 1) Maintain routing table of known nodes and their next-hop, 2) For direct messages, use cached route if available, 3) If no route known, fall back to flood routing with want_ack flag, 4) Learn routes from overheard traffic and acknowledgments.'
-  status: Draft
+  status: Completed
   priority: High
   owner: joe
   feature: 9-Mesh Networking
   created_at: 2025-12-30T18:33:19.542829394Z
-  modified_at: 2025-12-30T18:33:19.542829394Z
+  modified_at: 2025-12-30T18:54:51.024770069Z
   req_type: Functional
   tags:
-  - next-hop
   - unicast
+  - next-hop
   - routing
   relationships:
   - rel_type: Parent
     target_id: 00a8d98b-da52-4c20-8d69-f1f90facbfc3
     created_at: 2025-12-30T18:33:19.542849266Z
+  comments:
+  - id: 7882997b-c703-4039-86f9-9bdddf1ae5f1
+    author: joe
+    content: Implemented in crates/r4w-core/src/mesh/routing.rs - NextHopRouter with RoutingTable
+    created_at: 2025-12-30T18:54:51.024766312Z
+    modified_at: 2025-12-30T18:54:51.024766312Z
+  history:
+  - id: 5d00d3e1-4087-4b95-8de1-999dc0c5ed41
+    author: CLI
+    timestamp: 2025-12-30T18:54:27.759881342Z
+    changes:
+    - field_name: status
+      old_value: Draft
+      new_value: Completed
 - id: 10da5b7c-e7f5-45e0-bf19-4fe92ff136c7
   spec_id: MESH-010
   prefix_override: MESH
   title: Meshtastic Mesh - Duplicate Packet Detection
   description: 'Detect and discard duplicate packets to prevent routing loops and redundant processing: 1) Maintain packet ID cache (sender_id + packet_id pairs), 2) Cache entries expire after 5 minutes, 3) Reject packets with IDs already in cache, 4) Support configurable cache size (default 256 entries).'
-  status: Draft
+  status: Completed
   priority: High
   owner: joe
   feature: 10-Mesh Networking
   created_at: 2025-12-30T18:33:29.192195503Z
-  modified_at: 2025-12-30T18:33:29.192195503Z
+  modified_at: 2025-12-30T18:54:27.765255591Z
   req_type: Functional
   tags:
+  - deduplication
   - cache
   - routing
-  - deduplication
   relationships:
   - rel_type: Parent
     target_id: 00a8d98b-da52-4c20-8d69-f1f90facbfc3
     created_at: 2025-12-30T18:33:29.192217625Z
+  history:
+  - id: fb7c7f89-4cf8-47b4-94d8-e0b93ec4c4b2
+    author: CLI
+    timestamp: 2025-12-30T18:54:27.765255315Z
+    changes:
+    - field_name: status
+      old_value: Draft
+      new_value: Completed
 - id: fe5d7438-7473-4548-b45d-51063b6fddf5
   spec_id: MESH-011
   prefix_override: MESH
   title: Meshtastic Mesh - Node Discovery and Neighbor Table
   description: 'Maintain a neighbor table of discovered nodes: 1) Track node ID, last seen time, SNR, hop count, 2) Update table on received packets, 3) Age out nodes not seen in 2 hours, 4) Support NodeInfo exchange packets containing device metadata (hardware model, firmware version, user-set name).'
-  status: Draft
+  status: Completed
   priority: High
   owner: joe
   feature: 11-Mesh Networking
   created_at: 2025-12-30T18:33:39.516228052Z
-  modified_at: 2025-12-30T18:33:39.516228052Z
+  modified_at: 2025-12-30T18:54:27.770472367Z
   req_type: Functional
   tags:
+  - routing
   - neighbor
   - discovery
-  - routing
   relationships:
   - rel_type: Parent
     target_id: 00a8d98b-da52-4c20-8d69-f1f90facbfc3
     created_at: 2025-12-30T18:33:39.516245732Z
+  history:
+  - id: ca95ea65-e3b1-4eea-be2f-1b1df019fc5e
+    author: CLI
+    timestamp: 2025-12-30T18:54:27.770472101Z
+    changes:
+    - field_name: status
+      old_value: Draft
+      new_value: Completed
 - id: d7d07440-c7f9-44e7-853a-85481c6a67c3
   spec_id: MESH-012
   prefix_override: MESH
@@ -232,9 +328,9 @@ requirements:
   modified_at: 2025-12-30T18:33:56.924811543Z
   req_type: Functional
   tags:
+  - messages
   - protobuf
   - interop
-  - messages
   relationships:
   - rel_type: Parent
     target_id: 00a8d98b-da52-4c20-8d69-f1f90facbfc3
@@ -253,8 +349,8 @@ requirements:
   req_type: Functional
   tags:
   - aes
-  - encryption
   - interop
+  - encryption
   relationships:
   - rel_type: Parent
     target_id: 00a8d98b-da52-4c20-8d69-f1f90facbfc3
@@ -292,8 +388,8 @@ requirements:
   modified_at: 2025-12-30T18:34:30.970516731Z
   req_type: Functional
   tags:
-  - app
   - text
+  - app
   - messaging
   relationships:
   - rel_type: Parent
@@ -312,9 +408,9 @@ requirements:
   modified_at: 2025-12-30T18:34:41.008292847Z
   req_type: Functional
   tags:
-  - app
-  - gps
   - position
+  - gps
+  - app
   relationships:
   - rel_type: Parent
     target_id: 00a8d98b-da52-4c20-8d69-f1f90facbfc3
@@ -324,21 +420,35 @@ requirements:
   prefix_override: MESH
   title: Meshtastic Integration - R4W MeshNetwork Trait
   description: 'Design generic MeshNetwork trait that Meshtastic implements, enabling future mesh protocols: 1) MeshNetwork trait with discover_neighbors(), route(), forward() methods, 2) MeshPhy trait extending Waveform with channel_busy(), rssi(), snr() methods, 3) Meshtastic as first implementation, 4) Trait design should support future Link-16, ALE mesh implementations.'
-  status: Draft
+  status: Completed
   priority: High
   owner: joe
   feature: 17-Mesh Networking
   created_at: 2025-12-30T18:34:53.292225704Z
-  modified_at: 2025-12-30T18:34:53.292225704Z
+  modified_at: 2025-12-30T18:54:51.029265252Z
   req_type: Functional
   tags:
+  - trait
   - integration
   - architecture
-  - trait
   relationships:
   - rel_type: Parent
     target_id: 00a8d98b-da52-4c20-8d69-f1f90facbfc3
     created_at: 2025-12-30T18:34:53.292250101Z
+  comments:
+  - id: 984513dd-9d80-4879-a825-961b6989a89b
+    author: joe
+    content: Implemented in crates/r4w-core/src/mesh/traits.rs - MeshNetwork and MeshPhy traits
+    created_at: 2025-12-30T18:54:51.029261556Z
+    modified_at: 2025-12-30T18:54:51.029261556Z
+  history:
+  - id: 8b8a4075-1c47-4eb5-a257-8819151b5f7d
+    author: CLI
+    timestamp: 2025-12-30T18:54:27.775974754Z
+    changes:
+    - field_name: status
+      old_value: Draft
+      new_value: Completed
 - id: b6bfb83d-6440-4280-8a5a-0c14cd6b0192
   spec_id: MESH-018
   prefix_override: MESH
@@ -372,9 +482,9 @@ requirements:
   modified_at: 2025-12-30T18:35:14.680235464Z
   req_type: Functional
   tags:
-  - testing
   - multi-node
   - simulation
+  - testing
   relationships:
   - rel_type: Parent
     target_id: 00a8d98b-da52-4c20-8d69-f1f90facbfc3
@@ -387,14 +497,14 @@ requirements:
   status: Draft
   priority: Medium
   owner: joe
-  feature: Mesh Networking
+  feature: 20-Mesh Networking
   created_at: 2025-12-30T18:35:26.159312602Z
   modified_at: 2025-12-30T18:35:26.159312602Z
   req_type: NonFunctional
   tags:
+  - battery
   - nfr
   - power
-  - battery
   relationships:
   - rel_type: Parent
     target_id: 00a8d98b-da52-4c20-8d69-f1f90facbfc3
@@ -444,7 +554,7 @@ id_config:
     prefix: META
     description: Database configuration and templates
 features: []
-next_feature_number: 20
+next_feature_number: 21
 next_spec_number: 21
 prefix_counters: {}
 relationship_definitions:

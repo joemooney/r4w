@@ -73,6 +73,9 @@ pub mod types;
 pub mod waveform;
 pub mod whitening;
 
+// Mesh networking support
+pub mod mesh;
+
 // Parallel processing (requires `parallel` feature)
 #[cfg(feature = "parallel")]
 pub mod parallel;
@@ -93,6 +96,9 @@ pub use types::{Complex, IQSample, Sample};
 pub use waveform::{CommonParams, DemodResult, Waveform, WaveformFactory, WaveformInfo, VisualizationData};
 pub use whitening::Whitening;
 
+// Mesh networking re-exports
+pub use mesh::{MeshNetwork, MeshPhy, MeshPacket, NodeId, FloodRouter, MacLayer};
+
 /// Prelude module for convenient imports
 pub mod prelude {
     pub use crate::chirp::{ChirpGenerator, ChirpType};
@@ -100,4 +106,6 @@ pub mod prelude {
     pub use crate::modulation::Modulator;
     pub use crate::params::{CodingRate, LoRaParams, SpreadingFactor};
     pub use crate::types::{Complex, IQSample};
+    // Mesh networking
+    pub use crate::mesh::{MeshNetwork, MeshPhy, MeshPacket, NodeId};
 }
