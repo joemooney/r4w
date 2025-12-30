@@ -30,7 +30,7 @@ hardware = ["dep:libc"]
 memory = ["dep:zeroize", "dep:aes-gcm", "dep:rand"]
 
 # WebAssembly sandbox isolation
-wasm = ["dep:wasmtime", "dep:wasmtime-wasi", "dep:r4w-core", "dep:num-complex"]
+wasm = ["dep:wasmtime", "dep:wasmtime-wasi", "dep:r4w-core", "dep:num-complex", "dep:rustfft"]
 
 # All features
 full = ["process", "containers", "microvm", "vm", "fpga", "hardware", "memory", "wasm"]
@@ -71,6 +71,7 @@ wasmtime-wasi = { version = "27", optional = true }
 # DSP core library (for WASM host functions)
 r4w-core = { path = "../r4w-core", optional = true }
 num-complex = { version = "0.4", optional = true }
+rustfft = { version = "6.4", optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true }

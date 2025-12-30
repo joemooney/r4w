@@ -293,8 +293,6 @@ fn print_stats(name: &str, times: &[u64]) {
 }
 
 fn bench_native_comparison() {
-    use std::f32::consts::PI;
-
     println!("## Native vs WASM Comparison");
 
     // WASM setup

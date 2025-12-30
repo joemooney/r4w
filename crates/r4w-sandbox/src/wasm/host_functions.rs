@@ -15,6 +15,13 @@
 //! - Pointers are i32 (WASM32 address space)
 //! - Lengths are in number of complex samples (not bytes)
 //!
+//! ## Performance Optimization
+//!
+//! This implementation uses f32 throughout to avoid conversion overhead:
+//! - Direct f32 memory access (no f32↔f64 conversion)
+//! - rustfft with Complex<f32> for FFT operations
+//! - Native f32 math for other operations
+//!
 //! ## Import Module
 //!
 //! Host functions are imported under the `r4w_dsp` namespace:
@@ -22,12 +29,16 @@
 //! (import "r4w_dsp" "fft" (func $fft (param i32 i32 i32)))
 //! ```
 
-use num_complex::Complex64;
-use r4w_core::fft_utils::FftProcessor;
+use num_complex::Complex;
+use rustfft::FftPlanner;
+use std::f32::consts::PI;
 use wasmtime::{Caller, Linker, Memory};
 
 use super::runtime::WasmHostState;
 use crate::error::{Result, SandboxError};
+
+/// Complex f32 type alias for clarity.
+type Complex32 = Complex<f32>;
 
 /// DSP host functions exposed to WASM modules.
 ///
@@ -88,15 +99,16 @@ impl DspHostFunctions {
                     let memory = get_memory(&mut caller)?;
                     let len = len as usize;
 
-                    // Read input as f32 pairs, convert to Complex64
-                    let input = read_complex_f32(&memory, &caller, in_ptr as usize, len)?;
+                    // Read input directly as Complex<f32>
+                    let mut buffer = read_complex_f32(&memory, &caller, in_ptr as usize, len)?;
 
-                    // Perform FFT (rustfft internally caches plans)
-                    let mut processor = FftProcessor::new(len);
-                    let output = processor.fft(&input);
+                    // Perform FFT using rustfft with f32
+                    let mut planner = FftPlanner::<f32>::new();
+                    let fft = planner.plan_fft_forward(len);
+                    fft.process(&mut buffer);
 
-                    // Write output back as f32 pairs
-                    write_complex_f32(&memory, &mut caller, out_ptr as usize, &output)?;
+                    // Write output directly
+                    write_complex_f32(&memory, &mut caller, out_ptr as usize, &buffer)?;
 
                     Ok(())
                 },
@@ -117,13 +129,20 @@ impl DspHostFunctions {
                     let memory = get_memory(&mut caller)?;
                     let len = len as usize;
 
-                    let input = read_complex_f32(&memory, &caller, in_ptr as usize, len)?;
+                    let mut buffer = read_complex_f32(&memory, &caller, in_ptr as usize, len)?;
 
-                    // Perform IFFT (rustfft internally caches plans)
-                    let mut processor = FftProcessor::new(len);
-                    let output = processor.ifft(&input);
+                    // Perform IFFT using rustfft with f32
+                    let mut planner = FftPlanner::<f32>::new();
+                    let ifft = planner.plan_fft_inverse(len);
+                    ifft.process(&mut buffer);
 
-                    write_complex_f32(&memory, &mut caller, out_ptr as usize, &output)?;
+                    // Normalize by 1/N
+                    let scale = 1.0 / len as f32;
+                    for c in &mut buffer {
+                        *c *= scale;
+                    }
+
+                    write_complex_f32(&memory, &mut caller, out_ptr as usize, &buffer)?;
 
                     Ok(())
                 },
@@ -152,8 +171,8 @@ impl DspHostFunctions {
                     let a = read_complex_f32(&memory, &caller, a_ptr as usize, len)?;
                     let b = read_complex_f32(&memory, &caller, b_ptr as usize, len)?;
 
-                    // Use SIMD-optimized multiplication from r4w-core
-                    let output = r4w_core::simd_utils::complex_multiply(&a, &b);
+                    // Element-wise complex multiply in f32
+                    let output: Vec<Complex32> = a.iter().zip(b.iter()).map(|(x, y)| x * y).collect();
 
                     write_complex_f32(&memory, &mut caller, out_ptr as usize, &output)?;
 
@@ -182,8 +201,9 @@ impl DspHostFunctions {
                     let a = read_complex_f32(&memory, &caller, a_ptr as usize, len)?;
                     let b = read_complex_f32(&memory, &caller, b_ptr as usize, len)?;
 
-                    // Use SIMD-optimized conjugate multiplication
-                    let output = r4w_core::simd_utils::complex_conjugate_multiply(&a, &b);
+                    // Element-wise: a * conj(b) in f32
+                    let output: Vec<Complex32> =
+                        a.iter().zip(b.iter()).map(|(x, y)| x * y.conj()).collect();
 
                     write_complex_f32(&memory, &mut caller, out_ptr as usize, &output)?;
 
@@ -213,11 +233,10 @@ impl DspHostFunctions {
 
                     let input = read_complex_f32(&memory, &caller, in_ptr as usize, len)?;
 
-                    // Use SIMD-optimized magnitude computation
-                    let output = r4w_core::simd_utils::compute_magnitudes(&input);
+                    // Compute magnitudes in f32
+                    let output: Vec<f32> = input.iter().map(|c| c.norm()).collect();
 
-                    // Write f64 output as f32
-                    write_f32_from_f64(&memory, &mut caller, out_ptr as usize, &output)?;
+                    write_f32(&memory, &mut caller, out_ptr as usize, &output)?;
 
                     Ok(())
                 },
@@ -242,10 +261,10 @@ impl DspHostFunctions {
 
                     let input = read_complex_f32(&memory, &caller, in_ptr as usize, len)?;
 
-                    // Use SIMD-optimized power computation
-                    let output = r4w_core::simd_utils::compute_power(&input);
+                    // Compute power (magnitude squared) in f32
+                    let output: Vec<f32> = input.iter().map(|c| c.norm_sqr()).collect();
 
-                    write_f32_from_f64(&memory, &mut caller, out_ptr as usize, &output)?;
+                    write_f32(&memory, &mut caller, out_ptr as usize, &output)?;
 
                     Ok(())
                 },
@@ -276,12 +295,17 @@ impl DspHostFunctions {
 
                     let input = read_complex_f32(&memory, &caller, in_ptr as usize, len)?;
 
-                    // Use SIMD-optimized frequency shift
-                    let output = r4w_core::simd_utils::frequency_shift(
-                        &input,
-                        freq_hz as f64,
-                        sample_rate as f64,
-                    );
+                    // NCO-based frequency shift in f32
+                    let phase_inc = 2.0 * PI * freq_hz / sample_rate;
+                    let output: Vec<Complex32> = input
+                        .iter()
+                        .enumerate()
+                        .map(|(i, c)| {
+                            let phase = phase_inc * i as f32;
+                            let nco = Complex32::new(phase.cos(), phase.sin());
+                            c * nco
+                        })
+                        .collect();
 
                     write_complex_f32(&memory, &mut caller, out_ptr as usize, &output)?;
 
@@ -311,10 +335,18 @@ impl DspHostFunctions {
                         Err(_) => return -1,
                     };
 
-                    // Find index of maximum magnitude
-                    let (peak_idx, _) = r4w_core::simd_utils::find_max_magnitude(&input);
+                    // Find index of maximum magnitude in f32
+                    let mut max_mag_sq = 0.0f32;
+                    let mut max_idx = 0i32;
+                    for (i, c) in input.iter().enumerate() {
+                        let mag_sq = c.norm_sqr();
+                        if mag_sq > max_mag_sq {
+                            max_mag_sq = mag_sq;
+                            max_idx = i as i32;
+                        }
+                    }
 
-                    peak_idx as i32
+                    max_idx
                 },
             )
             .map_err(|e| {
@@ -338,8 +370,8 @@ impl DspHostFunctions {
 
                     let input = read_complex_f32(&memory, &caller, in_ptr as usize, len)?;
 
-                    // Use SIMD-optimized scaling
-                    let output = r4w_core::simd_utils::scale(&input, factor as f64);
+                    // Scale in f32
+                    let output: Vec<Complex32> = input.iter().map(|c| c * factor).collect();
 
                     write_complex_f32(&memory, &mut caller, out_ptr as usize, &output)?;
 
@@ -367,7 +399,8 @@ impl DspHostFunctions {
                         Err(_) => return 0.0,
                     };
 
-                    r4w_core::simd_utils::total_power(&input) as f32
+                    // Sum of magnitude squared in f32
+                    input.iter().map(|c| c.norm_sqr()).sum()
                 },
             )
             .map_err(|e| {
@@ -389,9 +422,15 @@ impl DspHostFunctions {
                     let memory = get_memory(&mut caller)?;
                     let len = len as usize;
 
-                    let window = r4w_core::simd_utils::hann_window(len);
+                    // Generate Hann window (periodic/DFT-even) in f32
+                    let window: Vec<f32> = (0..len)
+                        .map(|i| {
+                            let x = 2.0 * PI * (i as f32) / (len as f32);
+                            0.5 * (1.0 - x.cos())
+                        })
+                        .collect();
 
-                    write_f32_from_f64(&memory, &mut caller, out_ptr as usize, &window)?;
+                    write_f32(&memory, &mut caller, out_ptr as usize, &window)?;
 
                     Ok(())
                 },
@@ -411,9 +450,15 @@ impl DspHostFunctions {
                     let memory = get_memory(&mut caller)?;
                     let len = len as usize;
 
-                    let window = r4w_core::simd_utils::hamming_window(len);
+                    // Generate Hamming window in f32
+                    let window: Vec<f32> = (0..len)
+                        .map(|i| {
+                            let x = 2.0 * PI * (i as f32) / (len as f32);
+                            0.54 - 0.46 * x.cos()
+                        })
+                        .collect();
 
-                    write_f32_from_f64(&memory, &mut caller, out_ptr as usize, &window)?;
+                    write_f32(&memory, &mut caller, out_ptr as usize, &window)?;
 
                     Ok(())
                 },
@@ -426,7 +471,7 @@ impl DspHostFunctions {
 }
 
 // ============================================================================
-// Memory Access Helpers
+// Memory Access Helpers (f32 native)
 // ============================================================================
 
 /// Get the memory export from the caller.
@@ -437,13 +482,14 @@ fn get_memory(caller: &mut Caller<'_, WasmHostState>) -> Result<Memory> {
         .ok_or_else(|| SandboxError::WasmError("no memory export found".to_string()))
 }
 
-/// Read complex samples from WASM memory (f32 interleaved) as Complex64.
+/// Read complex samples directly from WASM memory as Complex<f32>.
+/// No f64 conversion - reads f32 pairs directly.
 fn read_complex_f32(
     memory: &Memory,
     caller: &Caller<'_, WasmHostState>,
     offset: usize,
     len: usize,
-) -> Result<Vec<Complex64>> {
+) -> Result<Vec<Complex32>> {
     let byte_len = len * 8; // 2 f32s per complex = 8 bytes
     let data = memory.data(caller);
 
@@ -463,18 +509,19 @@ fn read_complex_f32(
             data[base + 6],
             data[base + 7],
         ]);
-        result.push(Complex64::new(re as f64, im as f64));
+        result.push(Complex32::new(re, im));
     }
 
     Ok(result)
 }
 
-/// Write Complex64 samples to WASM memory as f32 interleaved.
+/// Write Complex<f32> samples directly to WASM memory.
+/// No f64 conversion - writes f32 pairs directly.
 fn write_complex_f32(
     memory: &Memory,
     caller: &mut Caller<'_, WasmHostState>,
     offset: usize,
-    data: &[Complex64],
+    data: &[Complex32],
 ) -> Result<()> {
     let byte_len = data.len() * 8;
     let mem_data = memory.data_mut(caller);
@@ -487,8 +534,8 @@ fn write_complex_f32(
 
     for (i, c) in data.iter().enumerate() {
         let base = offset + i * 8;
-        let re_bytes = (c.re as f32).to_le_bytes();
-        let im_bytes = (c.im as f32).to_le_bytes();
+        let re_bytes = c.re.to_le_bytes();
+        let im_bytes = c.im.to_le_bytes();
 
         mem_data[base..base + 4].copy_from_slice(&re_bytes);
         mem_data[base + 4..base + 8].copy_from_slice(&im_bytes);
@@ -497,12 +544,12 @@ fn write_complex_f32(
     Ok(())
 }
 
-/// Write f64 values to WASM memory as f32.
-fn write_f32_from_f64(
+/// Write f32 values directly to WASM memory.
+fn write_f32(
     memory: &Memory,
     caller: &mut Caller<'_, WasmHostState>,
     offset: usize,
-    data: &[f64],
+    data: &[f32],
 ) -> Result<()> {
     let byte_len = data.len() * 4;
     let mem_data = memory.data_mut(caller);
@@ -515,7 +562,7 @@ fn write_f32_from_f64(
 
     for (i, &v) in data.iter().enumerate() {
         let base = offset + i * 4;
-        let bytes = (v as f32).to_le_bytes();
+        let bytes = v.to_le_bytes();
         mem_data[base..base + 4].copy_from_slice(&bytes);
     }
 

@@ -4090,6 +4090,7 @@ dependencies = [
  "r4w-core",
  "r4w-fpga",
  "rand 0.8.5",
+ "rustfft",
  "serde",
  "serde_json",
  "thiserror 2.0.17",
