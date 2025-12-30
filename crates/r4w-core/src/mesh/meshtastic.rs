@@ -22,10 +22,13 @@
 //! | ShortFast | 7 | 250 | 4/5 | Short range, highest throughput |
 //! | ShortSlow | 8 | 250 | 4/5 | Short range |
 
-use super::mac::{MacLayer, CsmaConfig, TransmitDecision};
+#[cfg(feature = "crypto")]
+use super::crypto::{ChannelKey, CryptoContext};
+use super::mac::{CsmaConfig, MacLayer, TransmitDecision};
 use super::neighbor::{Neighbor, NeighborTable, NodeInfo};
 use super::packet::{MeshPacket, NodeId, PacketType};
 use super::routing::{FloodRouter, NextHopRouter, Route};
+use super::telemetry::{DeviceMetrics, EnvironmentMetrics, Telemetry, TelemetryConfig, TelemetryVariant};
 use super::traits::{MeshError, MeshNetwork, MeshResult, MeshStats};
 use std::time::{Duration, Instant};
 
@@ -154,6 +157,64 @@ pub struct ChannelConfig {
     pub downlink_enabled: bool,
 }
 
+impl ChannelConfig {
+    /// Create a new channel configuration
+    pub fn new(name: &str, preset: ModemPreset) -> Self {
+        Self {
+            name: name.to_string(),
+            psk: None,
+            preset,
+            uplink_enabled: false,
+            downlink_enabled: false,
+        }
+    }
+
+    /// Create an encrypted channel with the given PSK
+    pub fn with_psk(name: &str, psk: [u8; 32], preset: ModemPreset) -> Self {
+        Self {
+            name: name.to_string(),
+            psk: Some(psk),
+            preset,
+            uplink_enabled: false,
+            downlink_enabled: false,
+        }
+    }
+
+    /// Create an encrypted channel using the default Meshtastic PSK
+    #[cfg(feature = "crypto")]
+    pub fn with_default_psk(name: &str, preset: ModemPreset) -> Self {
+        use super::crypto::DEFAULT_PSK;
+        let mut psk = [0u8; 32];
+        // Extend default PSK to 32 bytes
+        psk[..DEFAULT_PSK.len()].copy_from_slice(DEFAULT_PSK);
+        Self::with_psk(name, psk, preset)
+    }
+
+    /// Check if this channel uses encryption
+    pub fn is_encrypted(&self) -> bool {
+        self.psk.is_some()
+    }
+
+    /// Create a CryptoContext for this channel (if encrypted)
+    #[cfg(feature = "crypto")]
+    pub fn crypto_context(&self) -> Option<CryptoContext> {
+        self.psk.map(|psk| {
+            let key = ChannelKey::from_raw(psk, &self.name);
+            CryptoContext::from_key(key)
+        })
+    }
+
+    /// Get channel hash for wire format
+    pub fn channel_hash(&self) -> u8 {
+        #[cfg(feature = "crypto")]
+        if let Some(ref ctx) = self.crypto_context() {
+            return ctx.channel_hash();
+        }
+        // Simple hash without crypto feature
+        self.name.bytes().fold(0u8, |acc, b| acc.wrapping_add(b))
+    }
+}
+
 impl Default for ChannelConfig {
     fn default() -> Self {
         Self {
@@ -191,6 +252,10 @@ pub struct MeshtasticConfig {
     pub is_router: bool,
     /// Hop limit for broadcasts
     pub hop_limit: u8,
+    /// Telemetry configuration
+    pub telemetry: TelemetryConfig,
+    /// Enable encryption on primary channel
+    pub encryption_enabled: bool,
 }
 
 impl Default for MeshtasticConfig {
@@ -207,6 +272,8 @@ impl Default for MeshtasticConfig {
             position_interval: 900, // 15 minutes
             is_router: false,
             hop_limit: 3,
+            telemetry: TelemetryConfig::default(),
+            encryption_enabled: false,
         }
     }
 }
@@ -236,6 +303,17 @@ pub struct MeshtasticNode {
     last_position_broadcast: Option<Instant>,
     /// Last node info broadcast time
     last_nodeinfo_broadcast: Option<Instant>,
+    /// Crypto context for primary channel (when encryption enabled)
+    #[cfg(feature = "crypto")]
+    crypto: Option<CryptoContext>,
+    /// Current device metrics
+    device_metrics: DeviceMetrics,
+    /// Current environment metrics (if sensors available)
+    environment_metrics: Option<EnvironmentMetrics>,
+    /// Last telemetry broadcast time
+    last_telemetry_broadcast: Option<Instant>,
+    /// Node start time for uptime calculation
+    start_time: Instant,
 }
 
 impl MeshtasticNode {
@@ -265,6 +343,14 @@ impl MeshtasticNode {
             cad_threshold: -115.0,
         };
 
+        // Initialize crypto context if encryption is enabled
+        #[cfg(feature = "crypto")]
+        let crypto = if config.encryption_enabled {
+            config.primary_channel.crypto_context()
+        } else {
+            None
+        };
+
         Self {
             node_id,
             flood_router: FloodRouter::new(node_id),
@@ -277,6 +363,12 @@ impl MeshtasticNode {
             rx_queue: Vec::new(),
             last_position_broadcast: None,
             last_nodeinfo_broadcast: None,
+            #[cfg(feature = "crypto")]
+            crypto,
+            device_metrics: DeviceMetrics::default(),
+            environment_metrics: None,
+            last_telemetry_broadcast: None,
+            start_time: Instant::now(),
         }
     }
 
@@ -298,6 +390,49 @@ impl MeshtasticNode {
     /// Set battery level
     pub fn set_battery_level(&mut self, level: u8) {
         self.node_info.battery_level = Some(level.min(100));
+        self.device_metrics.battery_level = Some(level.min(100));
+    }
+
+    /// Update device metrics
+    pub fn update_device_metrics(&mut self) {
+        // Update uptime
+        self.device_metrics.uptime_seconds = Some(self.start_time.elapsed().as_secs() as u32);
+
+        // Update channel utilization from MAC layer
+        self.device_metrics.channel_utilization = Some(self.mac.channel_utilization_cached());
+    }
+
+    /// Set voltage reading
+    pub fn set_voltage(&mut self, voltage: f32) {
+        self.device_metrics.voltage = Some(voltage);
+    }
+
+    /// Set air utilization TX percentage
+    pub fn set_air_util_tx(&mut self, util: f32) {
+        self.device_metrics.air_util_tx = Some(util);
+    }
+
+    /// Set environment metrics (for nodes with sensors)
+    pub fn set_environment_metrics(&mut self, metrics: EnvironmentMetrics) {
+        self.environment_metrics = Some(metrics);
+    }
+
+    /// Get current device metrics
+    pub fn device_metrics(&self) -> &DeviceMetrics {
+        &self.device_metrics
+    }
+
+    /// Get current environment metrics
+    pub fn environment_metrics(&self) -> Option<&EnvironmentMetrics> {
+        self.environment_metrics.as_ref()
+    }
+
+    /// Check if encryption is enabled
+    pub fn is_encrypted(&self) -> bool {
+        #[cfg(feature = "crypto")]
+        return self.crypto.is_some();
+        #[cfg(not(feature = "crypto"))]
+        return false;
     }
 
     /// Get packets ready for application layer
@@ -319,8 +454,7 @@ impl MeshtasticNode {
     pub fn process_tx(&mut self, channel_busy: bool) -> Option<Vec<u8>> {
         // Check for pending rebroadcasts
         if let Some(packet) = self.flood_router.get_pending_rebroadcast() {
-            let bytes = packet.to_bytes();
-            if self.mac.queue_tx(bytes).is_ok() {
+            if self.queue_packet(&packet).is_ok() {
                 self.stats.packets_forwarded += 1;
             }
         }
@@ -345,6 +479,45 @@ impl MeshtasticNode {
         self.mac.tx_complete(duration);
     }
 
+    /// Queue a packet for transmission with optional encryption
+    fn queue_packet(&mut self, packet: &MeshPacket) -> MeshResult<()> {
+        #[cfg(feature = "crypto")]
+        let bytes = if let Some(ref crypto) = self.crypto {
+            // Encrypt the packet
+            match packet.encrypt(crypto) {
+                Ok(encrypted) => encrypted,
+                Err(_) => packet.to_bytes(), // Fall back to unencrypted on error
+            }
+        } else {
+            packet.to_bytes()
+        };
+
+        #[cfg(not(feature = "crypto"))]
+        let bytes = packet.to_bytes();
+
+        self.mac.queue_tx(bytes).map_err(|_| MeshError::QueueFull)
+    }
+
+    /// Decrypt a received packet if encryption is enabled
+    #[cfg(feature = "crypto")]
+    #[allow(dead_code)] // Will be used when processing raw encrypted bytes
+    fn decrypt_packet(&self, data: &[u8]) -> Option<MeshPacket> {
+        if let Some(ref crypto) = self.crypto {
+            // Try to decrypt
+            MeshPacket::decrypt(data, crypto).ok()
+        } else {
+            // No encryption, parse directly
+            MeshPacket::from_bytes(data)
+        }
+    }
+
+    /// Parse a received packet (no crypto support)
+    #[cfg(not(feature = "crypto"))]
+    #[allow(dead_code)] // Will be used when processing raw bytes
+    fn decrypt_packet(&self, data: &[u8]) -> Option<MeshPacket> {
+        MeshPacket::from_bytes(data)
+    }
+
     /// Broadcast node info
     fn broadcast_node_info(&mut self) {
         let packet = MeshPacket::node_info(
@@ -352,7 +525,7 @@ impl MeshtasticNode {
             &self.node_info.short_name,
             &self.node_info.long_name,
         );
-        let _ = self.mac.queue_tx(packet.to_bytes());
+        let _ = self.queue_packet(&packet);
         self.last_nodeinfo_broadcast = Some(Instant::now());
     }
 
@@ -360,9 +533,24 @@ impl MeshtasticNode {
     fn broadcast_position(&mut self) {
         if let Some((lat, lon, alt)) = self.node_info.position {
             let packet = MeshPacket::position(self.node_id, lat, lon, alt);
-            let _ = self.mac.queue_tx(packet.to_bytes());
+            let _ = self.queue_packet(&packet);
             self.last_position_broadcast = Some(Instant::now());
         }
+    }
+
+    /// Broadcast telemetry
+    fn broadcast_telemetry(&mut self) {
+        // Update metrics before broadcasting
+        self.update_device_metrics();
+
+        let telemetry = Telemetry {
+            time: self.start_time.elapsed().as_secs() as u32,
+            variant: TelemetryVariant::Device(self.device_metrics.clone()),
+        };
+
+        let packet = MeshPacket::telemetry(self.node_id, &telemetry);
+        let _ = self.queue_packet(&packet);
+        self.last_telemetry_broadcast = Some(Instant::now());
     }
 }
 
@@ -402,10 +590,7 @@ impl MeshNetwork for MeshtasticNode {
     }
 
     fn forward(&mut self, packet: MeshPacket) -> MeshResult<()> {
-        let bytes = packet.to_bytes();
-        self.mac
-            .queue_tx(bytes)
-            .map_err(|_| MeshError::QueueFull)
+        self.queue_packet(&packet)
     }
 
     fn on_receive(&mut self, mut packet: MeshPacket, rssi: f32, snr: f32) -> Vec<MeshPacket> {
@@ -438,6 +623,12 @@ impl MeshNetwork for MeshtasticNode {
                     // Update node info in neighbor table
                     if let Some(info) = self.parse_node_info(&local_packet.payload) {
                         self.neighbors.update_info(local_packet.header.source, info);
+                    }
+                }
+                PacketType::Telemetry => {
+                    // Parse and store telemetry from neighbor
+                    if let Some(telemetry) = self.parse_telemetry(&local_packet.payload) {
+                        self.neighbors.update_telemetry(local_packet.header.source, telemetry);
                     }
                 }
                 PacketType::Ack => {
@@ -476,6 +667,18 @@ impl MeshNetwork for MeshtasticNode {
                 self.broadcast_position();
             }
         }
+
+        // Check for telemetry broadcast
+        if self.config.telemetry.device_update_interval > 0 {
+            let interval = Duration::from_secs(self.config.telemetry.device_update_interval as u64);
+            let should_broadcast = self.last_telemetry_broadcast
+                .map(|t| t.elapsed() > interval)
+                .unwrap_or(true);
+
+            if should_broadcast {
+                self.broadcast_telemetry();
+            }
+        }
     }
 }
 
@@ -506,6 +709,11 @@ impl MeshtasticNode {
         };
 
         Some(NodeInfo::with_names(NodeId::UNKNOWN, &short_name, &long_name))
+    }
+
+    /// Parse telemetry from payload
+    fn parse_telemetry(&self, payload: &[u8]) -> Option<Telemetry> {
+        Telemetry::from_bytes(payload)
     }
 }
 

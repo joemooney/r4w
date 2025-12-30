@@ -324,6 +324,188 @@ impl Telemetry {
             _ => None,
         }
     }
+
+    /// Serialize telemetry to bytes
+    ///
+    /// Format:
+    /// - Byte 0: Variant type (0=Device, 1=Environment, 2=Power)
+    /// - Bytes 1-4: Timestamp (little-endian u32)
+    /// - Remaining: Variant-specific data
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+
+        match &self.variant {
+            TelemetryVariant::Device(m) => {
+                bytes.push(0); // Type: Device
+                bytes.extend_from_slice(&self.time.to_le_bytes());
+                // Pack device metrics
+                bytes.push(m.battery_level.unwrap_or(0xFF));
+                if let Some(v) = m.voltage {
+                    bytes.extend_from_slice(&v.to_le_bytes());
+                } else {
+                    bytes.extend_from_slice(&f32::NAN.to_le_bytes());
+                }
+                if let Some(u) = m.channel_utilization {
+                    bytes.extend_from_slice(&u.to_le_bytes());
+                } else {
+                    bytes.extend_from_slice(&f32::NAN.to_le_bytes());
+                }
+                if let Some(u) = m.air_util_tx {
+                    bytes.extend_from_slice(&u.to_le_bytes());
+                } else {
+                    bytes.extend_from_slice(&f32::NAN.to_le_bytes());
+                }
+                bytes.extend_from_slice(&m.uptime_seconds.unwrap_or(0).to_le_bytes());
+            }
+            TelemetryVariant::Environment(m) => {
+                bytes.push(1); // Type: Environment
+                bytes.extend_from_slice(&self.time.to_le_bytes());
+                // Pack environment metrics (simplified)
+                if let Some(t) = m.temperature {
+                    bytes.extend_from_slice(&t.to_le_bytes());
+                } else {
+                    bytes.extend_from_slice(&f32::NAN.to_le_bytes());
+                }
+                if let Some(h) = m.relative_humidity {
+                    bytes.extend_from_slice(&h.to_le_bytes());
+                } else {
+                    bytes.extend_from_slice(&f32::NAN.to_le_bytes());
+                }
+                if let Some(p) = m.barometric_pressure {
+                    bytes.extend_from_slice(&p.to_le_bytes());
+                } else {
+                    bytes.extend_from_slice(&f32::NAN.to_le_bytes());
+                }
+            }
+            TelemetryVariant::Power(m) => {
+                bytes.push(2); // Type: Power
+                bytes.extend_from_slice(&self.time.to_le_bytes());
+                bytes.push(m.channels.len() as u8);
+                for ch in &m.channels {
+                    bytes.push(ch.channel);
+                    if let Some(v) = ch.voltage {
+                        bytes.extend_from_slice(&v.to_le_bytes());
+                    } else {
+                        bytes.extend_from_slice(&f32::NAN.to_le_bytes());
+                    }
+                    if let Some(i) = ch.current {
+                        bytes.extend_from_slice(&i.to_le_bytes());
+                    } else {
+                        bytes.extend_from_slice(&f32::NAN.to_le_bytes());
+                    }
+                }
+            }
+        }
+
+        bytes
+    }
+
+    /// Parse telemetry from bytes
+    pub fn from_bytes(data: &[u8]) -> Option<Self> {
+        if data.len() < 5 {
+            return None;
+        }
+
+        let variant_type = data[0];
+        let time = u32::from_le_bytes([data[1], data[2], data[3], data[4]]);
+
+        let variant = match variant_type {
+            0 => {
+                // Device metrics
+                if data.len() < 22 {
+                    return None;
+                }
+                let battery = if data[5] == 0xFF { None } else { Some(data[5]) };
+                let voltage = {
+                    let v = f32::from_le_bytes([data[6], data[7], data[8], data[9]]);
+                    if v.is_nan() { None } else { Some(v) }
+                };
+                let channel_util = {
+                    let v = f32::from_le_bytes([data[10], data[11], data[12], data[13]]);
+                    if v.is_nan() { None } else { Some(v) }
+                };
+                let air_util = {
+                    let v = f32::from_le_bytes([data[14], data[15], data[16], data[17]]);
+                    if v.is_nan() { None } else { Some(v) }
+                };
+                let uptime = u32::from_le_bytes([data[18], data[19], data[20], data[21]]);
+
+                TelemetryVariant::Device(DeviceMetrics {
+                    battery_level: battery,
+                    voltage,
+                    channel_utilization: channel_util,
+                    air_util_tx: air_util,
+                    uptime_seconds: if uptime == 0 { None } else { Some(uptime) },
+                })
+            }
+            1 => {
+                // Environment metrics
+                if data.len() < 17 {
+                    return None;
+                }
+                let temp = {
+                    let v = f32::from_le_bytes([data[5], data[6], data[7], data[8]]);
+                    if v.is_nan() { None } else { Some(v) }
+                };
+                let humidity = {
+                    let v = f32::from_le_bytes([data[9], data[10], data[11], data[12]]);
+                    if v.is_nan() { None } else { Some(v) }
+                };
+                let pressure = {
+                    let v = f32::from_le_bytes([data[13], data[14], data[15], data[16]]);
+                    if v.is_nan() { None } else { Some(v) }
+                };
+
+                TelemetryVariant::Environment(EnvironmentMetrics {
+                    temperature: temp,
+                    relative_humidity: humidity,
+                    barometric_pressure: pressure,
+                    ..Default::default()
+                })
+            }
+            2 => {
+                // Power metrics
+                if data.len() < 6 {
+                    return None;
+                }
+                let num_channels = data[5] as usize;
+                let mut channels = Vec::with_capacity(num_channels);
+                let mut offset = 6;
+
+                for _ in 0..num_channels {
+                    if offset + 9 > data.len() {
+                        break;
+                    }
+                    let channel = data[offset];
+                    let voltage = {
+                        let v = f32::from_le_bytes([
+                            data[offset + 1],
+                            data[offset + 2],
+                            data[offset + 3],
+                            data[offset + 4],
+                        ]);
+                        if v.is_nan() { None } else { Some(v) }
+                    };
+                    let current = {
+                        let v = f32::from_le_bytes([
+                            data[offset + 5],
+                            data[offset + 6],
+                            data[offset + 7],
+                            data[offset + 8],
+                        ]);
+                        if v.is_nan() { None } else { Some(v) }
+                    };
+                    channels.push(PowerChannel { channel, voltage, current });
+                    offset += 9;
+                }
+
+                TelemetryVariant::Power(PowerMetrics { channels })
+            }
+            _ => return None,
+        };
+
+        Some(Self { time, variant })
+    }
 }
 
 /// Telemetry configuration
@@ -462,5 +644,56 @@ mod tests {
             PowerChannel::new(0, Some(12.0), Some(200.0)),
         ));
         assert!(power.as_power().is_some());
+    }
+
+    #[test]
+    fn test_telemetry_device_roundtrip() {
+        let metrics = DeviceMetrics::new(
+            Some(85),
+            Some(4.1),
+            Some(0.05),
+            Some(0.02),
+            Some(3600),
+        );
+        let telemetry = Telemetry::with_time(12345, TelemetryVariant::Device(metrics.clone()));
+
+        let bytes = telemetry.to_bytes();
+        let recovered = Telemetry::from_bytes(&bytes).expect("Should parse");
+
+        assert_eq!(recovered.time, 12345);
+        let recovered_metrics = recovered.as_device().expect("Should be device metrics");
+        assert_eq!(recovered_metrics.battery_level, Some(85));
+        assert_eq!(recovered_metrics.uptime_seconds, Some(3600));
+    }
+
+    #[test]
+    fn test_telemetry_environment_roundtrip() {
+        let metrics = EnvironmentMetrics::with_weather(25.5, 60.0, 1013.25);
+        let telemetry = Telemetry::with_time(99999, TelemetryVariant::Environment(metrics));
+
+        let bytes = telemetry.to_bytes();
+        let recovered = Telemetry::from_bytes(&bytes).expect("Should parse");
+
+        assert_eq!(recovered.time, 99999);
+        let recovered_metrics = recovered.as_environment().expect("Should be environment");
+        assert_eq!(recovered_metrics.temperature, Some(25.5));
+        assert_eq!(recovered_metrics.relative_humidity, Some(60.0));
+    }
+
+    #[test]
+    fn test_telemetry_power_roundtrip() {
+        let mut power = PowerMetrics::new();
+        power.add_channel(PowerChannel::new(0, Some(5.0), Some(100.0)));
+        power.add_channel(PowerChannel::new(1, Some(3.3), Some(50.0)));
+        let telemetry = Telemetry::with_time(11111, TelemetryVariant::Power(power));
+
+        let bytes = telemetry.to_bytes();
+        let recovered = Telemetry::from_bytes(&bytes).expect("Should parse");
+
+        assert_eq!(recovered.time, 11111);
+        let recovered_power = recovered.as_power().expect("Should be power");
+        assert_eq!(recovered_power.channels.len(), 2);
+        assert_eq!(recovered_power.channels[0].channel, 0);
+        assert_eq!(recovered_power.channels[1].voltage, Some(3.3));
     }
 }

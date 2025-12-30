@@ -5,6 +5,7 @@
 //! provides the foundation for routing decisions.
 
 use super::packet::NodeId;
+use super::telemetry::Telemetry;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -130,6 +131,8 @@ pub struct Neighbor {
     last_seen: Instant,
     /// Hop count (always 1 for direct neighbors)
     pub hop_count: u8,
+    /// Last received telemetry
+    pub telemetry: Option<Telemetry>,
 }
 
 impl Neighbor {
@@ -140,6 +143,7 @@ impl Neighbor {
             link_quality: LinkQuality::new(rssi, snr),
             last_seen: Instant::now(),
             hop_count: 1,
+            telemetry: None,
         }
     }
 
@@ -152,6 +156,11 @@ impl Neighbor {
     /// Update node info
     pub fn set_info(&mut self, info: NodeInfo) {
         self.info = info;
+    }
+
+    /// Update telemetry
+    pub fn set_telemetry(&mut self, telemetry: Telemetry) {
+        self.telemetry = Some(telemetry);
     }
 
     /// Get time since last seen
@@ -208,6 +217,13 @@ impl NeighborTable {
     pub fn update_info(&mut self, node_id: NodeId, info: NodeInfo) {
         if let Some(neighbor) = self.neighbors.get_mut(&node_id) {
             neighbor.set_info(info);
+        }
+    }
+
+    /// Update telemetry for a neighbor
+    pub fn update_telemetry(&mut self, node_id: NodeId, telemetry: Telemetry) {
+        if let Some(neighbor) = self.neighbors.get_mut(&node_id) {
+            neighbor.set_telemetry(telemetry);
         }
     }
 

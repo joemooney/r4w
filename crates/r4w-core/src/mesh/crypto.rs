@@ -49,9 +49,11 @@ pub const DEFAULT_PSK: &[u8] = &[
 ];
 
 /// Magic string for key derivation
+#[cfg(feature = "crypto")]
 const KEY_DERIVATION_MAGIC: &[u8] = b"Meshtastic";
 
 /// Nonce base pattern for XOR
+#[cfg(feature = "crypto")]
 const NONCE_BASE: [u8; 8] = [0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07];
 
 /// Crypto error types
@@ -209,6 +211,7 @@ impl CryptoContext {
     }
 
     /// Construct the 16-byte nonce/IV for AES-CTR
+    #[cfg(feature = "crypto")]
     fn make_nonce(source: NodeId, packet_id: u32) -> [u8; 16] {
         let mut nonce = [0u8; 16];
 
@@ -442,6 +445,9 @@ mod tests {
     fn test_channel_key_creation() {
         let key = ChannelKey::new("LongFast", DEFAULT_PSK);
         assert_eq!(key.channel_name(), "LongFast");
+        // With crypto feature, key is derived and non-zero
+        // Without crypto feature, stub returns zeroed key
+        #[cfg(feature = "crypto")]
         assert_ne!(key.as_bytes(), &[0u8; 32]);
     }
 

@@ -446,6 +446,19 @@ impl MeshPacket {
         }
     }
 
+    /// Create a telemetry packet
+    pub fn telemetry(source: NodeId, telemetry: &super::telemetry::Telemetry) -> Self {
+        Self {
+            header: PacketHeader::broadcast(source, 3),
+            packet_type: PacketType::Telemetry,
+            payload: telemetry.to_bytes(),
+            mic: None,
+            rx_rssi: None,
+            rx_snr: None,
+            rx_time: None,
+        }
+    }
+
     /// Get the unique identifier for duplicate detection
     pub fn dedup_key(&self) -> (NodeId, u16) {
         (self.header.source, self.header.packet_id)
