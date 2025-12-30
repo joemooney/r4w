@@ -117,6 +117,85 @@ auto samples = waveform.modulate({1, 0, 1, 1, 0, 0, 1, 0});
 | **r4w-cli** | Command-line tool (`r4w`) | TX/RX, benchmarking, remote agents, waveform simulation, mesh networking |
 | **r4w-web** | WebAssembly entry point | Browser-based demo and education |
 
+## Hardware SDR Support
+
+R4W provides hardware abstraction for popular SDR devices through the HAL layer in `r4w-sim`. All drivers use **dynamic library loading** to avoid compile-time dependencies - the same binary works with or without hardware installed.
+
+### Supported Devices
+
+| Driver | Feature Flag | Status | Devices | Notes |
+|--------|--------------|--------|---------|-------|
+| **SoapySDR** | `soapysdr` | ✅ Full FFI | LimeSDR, HackRF, PlutoSDR, BladeRF, Airspy, RTL-SDR, USRP | Vendor-neutral abstraction |
+| **RTL-SDR** | `rtlsdr` | ✅ Full FFI | RTL2832U-based dongles (R820T, E4000, etc.) | RX only, 24-1766 MHz |
+| **UHD** | `uhd` | Stub | USRP B200/B210, N200/N210, X300/X310 | Use SoapySDR for full support |
+| **SigMF** | (default) | ✅ Complete | File I/O (SigMF, GNU Radio, raw IQ) | Record/replay testing |
+
+### Quick Start
+
+```bash
+# Build with SoapySDR support
+cargo build --release --features soapysdr
+
+# Build with RTL-SDR support
+cargo build --release --features rtlsdr
+
+# Build with all hardware support
+cargo build --release --features "soapysdr,rtlsdr"
+```
+
+### Library Requirements
+
+| Driver | Linux | macOS | Windows |
+|--------|-------|-------|---------|
+| **SoapySDR** | `libsoapysdr-dev` | `brew install soapysdr` | SoapySDR installer |
+| **RTL-SDR** | `librtlsdr-dev` | `brew install librtlsdr` | rtl-sdr package |
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                      HAL (Hardware Abstraction Layer)                │
+├─────────────────────────────────────────────────────────────────────┤
+│  SdrDeviceExt   │  StreamHandle   │  TunerControl   │  ClockControl │
+├────────────┬────┴────────────┬────┴────────────┬────┴───────────────┤
+│ SoapySDR   │    RTL-SDR      │      UHD        │      SigMF         │
+│ (LimeSDR,  │  (R820T/E4000)  │  (B200/N210)    │  (File I/O)        │
+│  HackRF,   │                 │                 │                    │
+│  PlutoSDR) │                 │                 │                    │
+├────────────┴─────────────────┴─────────────────┴────────────────────┤
+│               Dynamic Library Loading (libloading)                   │
+│           No compile-time dependency on hardware libraries           │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Example: Using SoapySDR
+
+```rust
+use r4w_sim::hal::{SoapySdrDriver, DeviceDriver, StreamConfig};
+use std::time::Duration;
+
+// Discover devices
+let driver = SoapySdrDriver::new();
+if driver.is_available() {
+    for dev in driver.discover() {
+        println!("Found: {} ({})", dev.label, dev.serial);
+    }
+
+    // Open first device
+    let mut device = driver.create_from_string("driver=lime")?;
+    device.tuner().set_frequency(915_000_000)?;
+    device.tuner().set_sample_rate(2_000_000.0)?;
+    device.tuner().set_rx_gain(30.0)?;
+
+    // Stream samples
+    let mut stream = device.create_rx_stream(StreamConfig::default())?;
+    stream.start()?;
+
+    let mut buffer = vec![IQSample::default(); 8192];
+    let (n_samples, timestamp) = stream.read(&mut buffer, Duration::from_millis(100))?;
+}
+```
+
 ### CLI Mesh Commands
 
 The `r4w` CLI includes mesh networking commands for LoRa-based mesh networks:
