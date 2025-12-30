@@ -13,6 +13,7 @@ use clap::{Parser, Subcommand};
 use r4w_core::agent::{AgentClient, AgentServer, DEFAULT_AGENT_PORT};
 use r4w_core::benchmark::{BenchmarkMetrics, BenchmarkReceiver, BenchmarkReport, SampleFormat, WaveformRunner};
 use r4w_core::demodulation::Demodulator;
+use r4w_core::mesh::{LoRaMesh, LoRaMeshConfig, MeshPhy, ModemPreset, NodeId, Region};
 use r4w_core::modulation::Modulator;
 use r4w_core::params::LoRaParams;
 use r4w_core::types::IQSample;
@@ -320,6 +321,12 @@ enum Commands {
         #[command(subcommand)]
         command: RemoteCommand,
     },
+
+    /// LoRa mesh networking commands
+    Mesh {
+        #[command(subcommand)]
+        command: MeshCommand,
+    },
 }
 
 #[derive(Subcommand)]
@@ -389,6 +396,96 @@ enum RemoteCommand {
     Shutdown,
 }
 
+#[derive(Subcommand)]
+enum MeshCommand {
+    /// Show mesh node status and statistics
+    Status {
+        /// Node ID (hex, e.g., "a1b2c3d4")
+        #[arg(short, long)]
+        node_id: Option<String>,
+
+        /// Modem preset (LongFast, LongSlow, MedFast, MedSlow, ShortFast, ShortSlow)
+        #[arg(short, long, default_value = "LongFast")]
+        preset: String,
+
+        /// Region (US, EU868, CN, JP, ANZ, KR, TW, RU, IN, NZ, UK, AU)
+        #[arg(short, long, default_value = "US")]
+        region: String,
+    },
+
+    /// Send a mesh message
+    Send {
+        /// Message to send
+        #[arg(short, long)]
+        message: String,
+
+        /// Destination node ID (hex) for direct message, or "broadcast"
+        #[arg(short, long, default_value = "broadcast")]
+        dest: String,
+
+        /// Hop limit for message propagation
+        #[arg(long, default_value = "3")]
+        hop_limit: u8,
+
+        /// Node ID (hex, e.g., "a1b2c3d4")
+        #[arg(short, long)]
+        node_id: Option<String>,
+
+        /// Modem preset
+        #[arg(short, long, default_value = "LongFast")]
+        preset: String,
+
+        /// Region
+        #[arg(short, long, default_value = "US")]
+        region: String,
+    },
+
+    /// List discovered neighbors
+    Neighbors {
+        /// Node ID (hex)
+        #[arg(short, long)]
+        node_id: Option<String>,
+
+        /// Modem preset
+        #[arg(short, long, default_value = "LongFast")]
+        preset: String,
+
+        /// Region
+        #[arg(short, long, default_value = "US")]
+        region: String,
+    },
+
+    /// Simulate a mesh network with multiple nodes
+    Simulate {
+        /// Number of nodes to simulate
+        #[arg(short, long, default_value = "4")]
+        nodes: usize,
+
+        /// Number of messages to exchange
+        #[arg(short, long, default_value = "10")]
+        messages: usize,
+
+        /// SNR in dB for channel simulation
+        #[arg(long, default_value = "10.0")]
+        snr: f64,
+
+        /// Modem preset
+        #[arg(short, long, default_value = "LongFast")]
+        preset: String,
+
+        /// Region
+        #[arg(short, long, default_value = "US")]
+        region: String,
+
+        /// Verbose output showing packet flow
+        #[arg(short, long)]
+        verbose: bool,
+    },
+
+    /// Show available presets and regions
+    Info,
+}
+
 fn validate_sf(sf: u8) -> Result<u8> {
     if (5..=12).contains(&sf) {
         Ok(sf)
@@ -421,6 +518,63 @@ fn parse_channel_model(model: &str) -> Result<ChannelModel> {
         "rician" => Ok(ChannelModel::Rician),
         _ => anyhow::bail!("Unknown channel model: {}. Use awgn, rayleigh, or rician", model),
     }
+}
+
+fn parse_preset(preset: &str) -> Result<ModemPreset> {
+    match preset.to_lowercase().as_str() {
+        "longfast" | "long_fast" => Ok(ModemPreset::LongFast),
+        "longslow" | "long_slow" => Ok(ModemPreset::LongSlow),
+        "longmoderate" | "long_moderate" => Ok(ModemPreset::LongModerate),
+        "medfast" | "med_fast" | "mediumfast" | "medium_fast" => Ok(ModemPreset::MediumFast),
+        "medslow" | "med_slow" | "mediumslow" | "medium_slow" => Ok(ModemPreset::MediumSlow),
+        "shortfast" | "short_fast" => Ok(ModemPreset::ShortFast),
+        "shortslow" | "short_slow" => Ok(ModemPreset::ShortSlow),
+        _ => anyhow::bail!(
+            "Unknown preset: {}. Use LongFast, LongSlow, LongModerate, MediumFast, MediumSlow, ShortFast, ShortSlow",
+            preset
+        ),
+    }
+}
+
+fn parse_region(region: &str) -> Result<Region> {
+    match region.to_uppercase().as_str() {
+        "US" => Ok(Region::US),
+        "EU868" | "EU" => Ok(Region::EU),
+        "CN" | "CHINA" => Ok(Region::CN),
+        "JP" | "JAPAN" => Ok(Region::JP),
+        "ANZ" | "AU" | "NZ" | "AUSTRALIA" => Ok(Region::ANZ),
+        "KR" | "KOREA" => Ok(Region::KR),
+        "TW" | "TAIWAN" => Ok(Region::TW),
+        "IN" | "INDIA" => Ok(Region::IN),
+        _ => anyhow::bail!(
+            "Unknown region: {}. Use US, EU, CN, JP, ANZ, KR, TW, IN",
+            region
+        ),
+    }
+}
+
+fn parse_node_id(id: &Option<String>) -> Result<Option<NodeId>> {
+    match id {
+        Some(s) => {
+            let value = u32::from_str_radix(s.trim_start_matches("0x"), 16)
+                .with_context(|| format!("Invalid node ID hex: {}", s))?;
+            Ok(Some(NodeId::from_u32(value)))
+        }
+        None => Ok(None),
+    }
+}
+
+fn create_mesh_config(
+    node_id: Option<String>,
+    preset: String,
+    region: String,
+) -> Result<LoRaMeshConfig> {
+    Ok(LoRaMeshConfig {
+        node_id: parse_node_id(&node_id)?,
+        preset: parse_preset(&preset)?,
+        region: parse_region(&region)?,
+        ..Default::default()
+    })
 }
 
 fn write_samples_f32(samples: &[IQSample], path: &PathBuf) -> Result<()> {
@@ -1370,6 +1524,307 @@ fn cmd_agent(port: u16, _foreground: bool) -> Result<()> {
     Ok(())
 }
 
+fn cmd_mesh_status(node_id: Option<String>, preset: String, region: String) -> Result<()> {
+    let config = create_mesh_config(node_id, preset.clone(), region.clone())?;
+    let mesh = LoRaMesh::new(config);
+
+    let preset_parsed = parse_preset(&preset)?;
+    let region_parsed = parse_region(&region)?;
+
+    println!("=== LoRa Mesh Node Status ===");
+    println!();
+    println!("Node ID:        {:08x}", mesh.node_id().to_u32());
+    println!("Preset:         {:?}", preset_parsed);
+    println!("Region:         {:?}", region_parsed);
+    println!();
+
+    // Get PHY info
+    let phy = mesh.phy();
+    println!("PHY Configuration:");
+    println!("  Frequency:    {} MHz", phy.frequency() as f64 / 1_000_000.0);
+    println!("  TX Power:     {} dBm", phy.tx_power());
+    println!("  RSSI:         {:.1} dBm", phy.rssi());
+    println!("  SNR:          {:.1} dB", phy.snr());
+    println!();
+
+    // Get stats
+    let stats = mesh.stats();
+    println!("Statistics:");
+    println!("  TX Packets:   {}", stats.packets_tx);
+    println!("  RX Packets:   {}", stats.packets_rx);
+    println!("  TX Bytes:     {}", stats.bytes_tx);
+    println!("  RX Bytes:     {}", stats.bytes_rx);
+    println!("  Forwarded:    {}", stats.packets_forwarded);
+    println!("  Dropped:      {}", stats.duplicates_dropped + stats.queue_drops);
+    println!("  Neighbors:    {}", stats.neighbor_count);
+
+    Ok(())
+}
+
+fn cmd_mesh_send(
+    message: String,
+    dest: String,
+    hop_limit: u8,
+    node_id: Option<String>,
+    preset: String,
+    region: String,
+) -> Result<()> {
+    let config = create_mesh_config(node_id, preset, region)?;
+    let mut mesh = LoRaMesh::new(config);
+
+    println!("=== LoRa Mesh Send ===");
+    println!();
+    println!("From:     {:08x}", mesh.node_id().to_u32());
+
+    if dest.to_lowercase() == "broadcast" {
+        println!("To:       BROADCAST");
+        println!("Hop Limit: {}", hop_limit);
+        println!("Message:  '{}'", message);
+        println!();
+
+        mesh.broadcast(message.as_bytes(), hop_limit)
+            .map_err(|e| anyhow::anyhow!("Broadcast failed: {:?}", e))?;
+
+        println!("Broadcast message queued for transmission");
+    } else {
+        let dest_id = u32::from_str_radix(dest.trim_start_matches("0x"), 16)
+            .with_context(|| format!("Invalid destination node ID: {}", dest))?;
+        let dest_node = NodeId::from_u32(dest_id);
+
+        println!("To:       {:08x}", dest_id);
+        println!("Message:  '{}'", message);
+        println!();
+
+        mesh.send_direct(dest_node, message.as_bytes())
+            .map_err(|e| anyhow::anyhow!("Send failed: {:?}", e))?;
+
+        println!("Direct message queued for transmission");
+    }
+
+    // Show TX samples info
+    if let Some(samples) = mesh.get_tx_samples() {
+        println!("Generated {} I/Q samples for transmission", samples.len());
+    }
+
+    Ok(())
+}
+
+fn cmd_mesh_neighbors(node_id: Option<String>, preset: String, region: String) -> Result<()> {
+    let config = create_mesh_config(node_id, preset, region)?;
+    let mesh = LoRaMesh::new(config);
+
+    println!("=== LoRa Mesh Neighbors ===");
+    println!();
+    println!("Node ID: {:08x}", mesh.node_id().to_u32());
+    println!();
+
+    let neighbors = mesh.neighbors();
+    if neighbors.is_empty() {
+        println!("No neighbors discovered yet.");
+        println!();
+        println!("Neighbors are discovered when packets are received from other nodes.");
+        println!("In a real deployment, run this command after the node has been");
+        println!("active on the mesh for some time.");
+    } else {
+        println!("{:<12} {:<10} {:<10} {:<20}", "Node ID", "RSSI", "SNR", "Last Seen");
+        println!("{}", "-".repeat(52));
+        for neighbor in neighbors {
+            println!(
+                "{:08x}     {:.1} dBm   {:.1} dB    {:?}",
+                neighbor.node_id().to_u32(),
+                neighbor.link_quality.rssi,
+                neighbor.link_quality.snr,
+                neighbor.time_since_seen()
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_mesh_simulate(
+    num_nodes: usize,
+    num_messages: usize,
+    snr: f64,
+    preset: String,
+    region: String,
+    verbose: bool,
+) -> Result<()> {
+    use rand::Rng;
+
+    let preset_parsed = parse_preset(&preset)?;
+    let region_parsed = parse_region(&region)?;
+
+    println!("=== LoRa Mesh Network Simulation ===");
+    println!();
+    println!("Nodes:    {}", num_nodes);
+    println!("Messages: {}", num_messages);
+    println!("SNR:      {:.1} dB", snr);
+    println!("Preset:   {:?}", preset_parsed);
+    println!("Region:   {:?}", region_parsed);
+    println!();
+
+    // Create nodes
+    let mut nodes: Vec<LoRaMesh> = Vec::new();
+    for i in 0..num_nodes {
+        let config = LoRaMeshConfig {
+            node_id: Some(NodeId::from_u32(0x1000 + i as u32)),
+            preset: preset_parsed,
+            region: region_parsed,
+            ..Default::default()
+        };
+        nodes.push(LoRaMesh::new(config));
+    }
+
+    println!("Created {} nodes:", num_nodes);
+    for node in &nodes {
+        println!("  - {:08x}", node.node_id().to_u32());
+    }
+    println!();
+
+    // Channel for simulation
+    let channel_config = ChannelConfig {
+        model: ChannelModel::Awgn,
+        snr_db: snr,
+        ..Default::default()
+    };
+    let mut channel = Channel::new(channel_config);
+
+    let mut rng = rand::thread_rng();
+    let mut total_sent = 0;
+    let mut total_received = 0;
+    let mut total_forwarded = 0;
+
+    println!("Simulating message exchange...");
+    if verbose {
+        println!();
+    }
+
+    for msg_idx in 0..num_messages {
+        // Pick random source node
+        let src_idx = rng.gen_range(0..num_nodes);
+        let message = format!("Message {}", msg_idx);
+
+        if verbose {
+            println!(
+                "[{}] Node {:08x} broadcasts: '{}'",
+                msg_idx,
+                nodes[src_idx].node_id().to_u32(),
+                message
+            );
+        }
+
+        // Source node broadcasts
+        nodes[src_idx]
+            .broadcast(message.as_bytes(), 3)
+            .map_err(|e| anyhow::anyhow!("Broadcast failed: {:?}", e))?;
+        total_sent += 1;
+
+        // Get TX samples from source
+        if let Some(tx_samples) = nodes[src_idx].get_tx_samples() {
+            // Apply channel to simulate propagation
+            let rx_samples = channel.apply(&tx_samples);
+
+            // All other nodes receive the samples
+            for (dest_idx, dest_node) in nodes.iter_mut().enumerate() {
+                if dest_idx != src_idx {
+                    dest_node.process_samples(&rx_samples);
+
+                    // Check for received packets
+                    let received: Vec<_> = dest_node.receive_packets().collect();
+                    for packet in &received {
+                        total_received += 1;
+                        if verbose {
+                            println!(
+                                "  -> Node {:08x} received: '{}'",
+                                dest_node.node_id().to_u32(),
+                                String::from_utf8_lossy(&packet.payload)
+                            );
+                        }
+                    }
+
+                    // Check if node forwards
+                    if let Some(fwd_samples) = dest_node.get_tx_samples() {
+                        total_forwarded += 1;
+                        if verbose {
+                            println!(
+                                "  -> Node {:08x} forwarding ({} samples)",
+                                dest_node.node_id().to_u32(),
+                                fwd_samples.len()
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    println!();
+    println!("=== Simulation Results ===");
+    println!();
+    println!("Messages sent:     {}", total_sent);
+    println!("Messages received: {}", total_received);
+    println!("Messages forwarded: {}", total_forwarded);
+    println!(
+        "Delivery rate:     {:.1}%",
+        if total_sent > 0 {
+            total_received as f64 / (total_sent * (num_nodes - 1)) as f64 * 100.0
+        } else {
+            0.0
+        }
+    );
+    println!();
+
+    // Show per-node stats
+    println!("Per-Node Statistics:");
+    println!("{:<12} {:<10} {:<10} {:<10}", "Node ID", "TX", "RX", "Fwd");
+    println!("{}", "-".repeat(42));
+    for node in &nodes {
+        let stats = node.stats();
+        println!(
+            "{:08x}     {:<10} {:<10} {:<10}",
+            node.node_id().to_u32(),
+            stats.packets_tx,
+            stats.packets_rx,
+            stats.packets_forwarded
+        );
+    }
+
+    Ok(())
+}
+
+fn cmd_mesh_info() -> Result<()> {
+    println!("=== LoRa Mesh Configuration Options ===");
+    println!();
+    println!("Modem Presets:");
+    println!("  LongFast     - SF11, BW 250kHz - Long range, faster data rate");
+    println!("  LongSlow     - SF12, BW 125kHz - Maximum range, slowest data rate");
+    println!("  LongModerate - SF11, BW 125kHz - Long range, moderate data rate");
+    println!("  MediumFast   - SF9,  BW 250kHz - Medium range, good data rate");
+    println!("  MediumSlow   - SF10, BW 250kHz - Medium range, slower data rate");
+    println!("  ShortFast    - SF7,  BW 250kHz - Short range, fastest data rate");
+    println!("  ShortSlow    - SF8,  BW 250kHz - Short range, moderate data rate");
+    println!();
+    println!("Regions:");
+    println!("  US   - 902-928 MHz (Americas)");
+    println!("  EU   - 863-870 MHz (Europe)");
+    println!("  CN   - 470-510 MHz (China)");
+    println!("  JP   - 920-923 MHz (Japan)");
+    println!("  ANZ  - 915-928 MHz (Australia/New Zealand)");
+    println!("  KR   - 920-923 MHz (Korea)");
+    println!("  TW   - 920-925 MHz (Taiwan)");
+    println!("  IN   - 865-867 MHz (India)");
+    println!();
+    println!("Examples:");
+    println!("  r4w mesh status --preset LongFast --region US");
+    println!("  r4w mesh send -m \"Hello mesh!\" --dest broadcast");
+    println!("  r4w mesh send -m \"Private\" --dest a1b2c3d4");
+    println!("  r4w mesh simulate --nodes 8 --messages 20 --snr 15");
+    println!("  r4w mesh neighbors");
+
+    Ok(())
+}
+
 fn cmd_remote(address: String, command: RemoteCommand) -> Result<()> {
     // Parse address
     let (host, port) = if address.contains(':') {
@@ -1573,5 +2028,39 @@ fn main() -> Result<()> {
         Commands::Agent { port, foreground } => cmd_agent(port, foreground),
 
         Commands::Remote { address, command } => cmd_remote(address, command),
+
+        Commands::Mesh { command } => match command {
+            MeshCommand::Status {
+                node_id,
+                preset,
+                region,
+            } => cmd_mesh_status(node_id, preset, region),
+
+            MeshCommand::Send {
+                message,
+                dest,
+                hop_limit,
+                node_id,
+                preset,
+                region,
+            } => cmd_mesh_send(message, dest, hop_limit, node_id, preset, region),
+
+            MeshCommand::Neighbors {
+                node_id,
+                preset,
+                region,
+            } => cmd_mesh_neighbors(node_id, preset, region),
+
+            MeshCommand::Simulate {
+                nodes,
+                messages,
+                snr,
+                preset,
+                region,
+                verbose,
+            } => cmd_mesh_simulate(nodes, messages, snr, preset, region, verbose),
+
+            MeshCommand::Info => cmd_mesh_info(),
+        },
     }
 }

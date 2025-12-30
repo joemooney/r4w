@@ -41,6 +41,7 @@
 //! ```
 
 use super::meshtastic::{ChannelConfig, MeshtasticConfig, MeshtasticNode, ModemPreset, Region};
+use super::neighbor::Neighbor;
 use super::packet::{MeshPacket, NodeId};
 use super::traits::{MeshError, MeshNetwork, MeshPhy, MeshResult, MeshStats};
 use crate::params::{Bandwidth, CodingRate, SpreadingFactor};
@@ -489,6 +490,16 @@ impl LoRaMesh {
     /// Get mesh network statistics
     pub fn stats(&self) -> MeshStats {
         self.mesh.stats()
+    }
+
+    /// Get discovered neighbors
+    pub fn neighbors(&self) -> Vec<Neighbor> {
+        self.mesh.neighbors().to_vec()
+    }
+
+    /// Discover neighbors (may trigger discovery protocol)
+    pub fn discover_neighbors(&mut self) -> Vec<Neighbor> {
+        self.mesh.discover_neighbors()
     }
 
     /// Get the PHY layer (for direct access)

@@ -85,5 +85,5 @@ pub use packet::{MeshPacket, PacketHeader, PacketFlags, NodeId};
 pub use routing::{Route, NextHop, FloodRouter, NextHopRouter, RoutingTable};
 pub use neighbor::{Neighbor, NeighborTable, NodeInfo};
 pub use mac::{MacLayer, CsmaConfig, ChannelState};
-pub use meshtastic::{MeshtasticNode, MeshtasticConfig, ModemPreset, Region};
+pub use meshtastic::{MeshtasticNode, MeshtasticConfig, ModemPreset, Region, ChannelConfig};
 pub use lora_mesh::{LoRaMesh, LoRaMeshPhy, LoRaMeshConfig};

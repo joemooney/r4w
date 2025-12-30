@@ -28,6 +28,9 @@ byteorder = "1.5"
 # Signal handling
 ctrlc = "3.4"
 
+# Random number generation for mesh simulation
+rand = "0.8"
+
 [features]
 default = []
 # Enable when hardware SDR support is ready

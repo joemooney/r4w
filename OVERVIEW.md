@@ -114,8 +114,36 @@ auto samples = waveform.modulate({1, 0, 1, 1, 0, 0, 1, 0});
 | **r4w-fpga** | FPGA hardware acceleration | Xilinx Zynq, Lattice iCE40/ECP5, simulated backend |
 | **r4w-sandbox** | Waveform isolation | Secure memory, namespaces, seccomp, container/VM support |
 | **r4w-gui** | Visualization library + app | egui widgets, spectrum plots, constellation diagrams |
-| **r4w-cli** | Command-line tool (`r4w`) | TX/RX, benchmarking, remote agents, waveform simulation |
+| **r4w-cli** | Command-line tool (`r4w`) | TX/RX, benchmarking, remote agents, waveform simulation, mesh networking |
 | **r4w-web** | WebAssembly entry point | Browser-based demo and education |
+
+### CLI Mesh Commands
+
+The `r4w` CLI includes mesh networking commands for LoRa-based mesh networks:
+
+```bash
+# Show mesh configuration options
+r4w mesh info
+
+# Show node status
+r4w mesh status --preset LongFast --region US
+
+# Send a broadcast message
+r4w mesh send -m "Hello mesh!" --dest broadcast --hop-limit 3
+
+# Send a direct message
+r4w mesh send -m "Private message" --dest a1b2c3d4
+
+# List discovered neighbors
+r4w mesh neighbors
+
+# Simulate a mesh network
+r4w mesh simulate --nodes 8 --messages 20 --snr 15 --verbose
+```
+
+**Presets:** LongFast, LongSlow, LongModerate, MediumFast, MediumSlow, ShortFast, ShortSlow
+
+**Regions:** US, EU, CN, JP, ANZ, KR, TW, IN
 
 ## Plugin System
 
@@ -260,6 +288,12 @@ Measured with `tokei`:
 
 ### December 2024
 
+- **Mesh CLI Commands Added** - `r4w mesh` subcommands for mesh networking:
+  - `mesh status` - Show node status, PHY config, and statistics
+  - `mesh send` - Send broadcast or direct messages
+  - `mesh neighbors` - List discovered neighbors with link quality
+  - `mesh simulate` - Multi-node mesh network simulation
+  - `mesh info` - Show available presets and regions
 - **LoRa Mesh Integration Complete** - Full integration of LoRa waveform with mesh networking:
   - `LoRaMeshPhy`: Adapts LoRa waveform to implement `MeshPhy` trait
   - `LoRaMesh`: Complete mesh node combining PHY, MAC, and routing layers

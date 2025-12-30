@@ -3980,6 +3980,7 @@ dependencies = [
  "ctrlc",
  "r4w-core",
  "r4w-sim",
+ "rand 0.8.5",
  "serde",
  "serde_json",
  "tokio",

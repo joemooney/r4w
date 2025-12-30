@@ -34,6 +34,12 @@ cargo run --bin r4w -- info --sf 7 --bw 125
 cargo run --bin r4w -- simulate --message "Hello R4W!" --snr 10.0
 cargo run --bin r4w -- waveform --list
 
+# Mesh networking
+cargo run --bin r4w -- mesh info
+cargo run --bin r4w -- mesh status --preset LongFast --region US
+cargo run --bin r4w -- mesh send -m "Hello mesh!" --dest broadcast
+cargo run --bin r4w -- mesh simulate --nodes 4 --messages 10
+
 # Run in browser (WASM)
 cd crates/r4w-web && trunk serve
 
@@ -62,6 +68,8 @@ See OVERVIEW.md for the full Waveform Developer's Guide and Porting Guide.
 
 ### Recent Updates
 
+- **Mesh CLI Commands** - `r4w mesh` subcommands for LoRa mesh networking (status, send, neighbors, simulate, info)
+- **Mesh Networking Module** - Full mesh stack with MeshtasticNode, FloodRouter, CSMA/CA MAC, LoRaMesh integration
 - **Physical Layer Architecture** (Session 18):
   - Multi-clock timing model (SampleClock, WallClock, HardwareClock, GPS/PTP SyncedTime)
   - Real-time primitives (lock-free SPSC ring buffers, buffer pools, RT thread spawning)
