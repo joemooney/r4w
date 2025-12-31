@@ -15,9 +15,9 @@ requirements:
   modified_at: 2025-12-30T18:54:37.847875523Z
   req_type: Epic
   tags:
+  - mesh
   - protocol
   - meshtastic
-  - mesh
   - lora
   history:
   - id: b87df4b0-b8f6-47cc-bf04-604b5362c7fc
@@ -108,9 +108,9 @@ requirements:
   modified_at: 2025-12-30T18:54:27.733209443Z
   req_type: Functional
   tags:
-  - physical-layer
-  - frequency
   - regulatory
+  - frequency
+  - physical-layer
   relationships:
   - rel_type: Parent
     target_id: 00a8d98b-da52-4c20-8d69-f1f90facbfc3
@@ -137,8 +137,8 @@ requirements:
   req_type: Functional
   tags:
   - collision-avoidance
-  - csma
   - mac-layer
+  - csma
   relationships:
   - rel_type: Parent
     target_id: 00a8d98b-da52-4c20-8d69-f1f90facbfc3
@@ -233,8 +233,8 @@ requirements:
   req_type: Functional
   tags:
   - flood
-  - broadcast
   - routing
+  - broadcast
   relationships:
   - rel_type: Parent
     target_id: 00a8d98b-da52-4c20-8d69-f1f90facbfc3
@@ -266,9 +266,9 @@ requirements:
   modified_at: 2025-12-30T18:54:51.024770069Z
   req_type: Functional
   tags:
-  - routing
   - unicast
   - next-hop
+  - routing
   relationships:
   - rel_type: Parent
     target_id: 00a8d98b-da52-4c20-8d69-f1f90facbfc3
@@ -301,8 +301,8 @@ requirements:
   req_type: Functional
   tags:
   - routing
-  - deduplication
   - cache
+  - deduplication
   relationships:
   - rel_type: Parent
     target_id: 00a8d98b-da52-4c20-8d69-f1f90facbfc3
@@ -328,9 +328,9 @@ requirements:
   modified_at: 2025-12-30T18:54:27.770472367Z
   req_type: Functional
   tags:
+  - routing
   - neighbor
   - discovery
-  - routing
   relationships:
   - rel_type: Parent
     target_id: 00a8d98b-da52-4c20-8d69-f1f90facbfc3
@@ -376,9 +376,9 @@ requirements:
   modified_at: 2025-12-30T18:34:06.606337548Z
   req_type: Functional
   tags:
+  - aes
   - interop
   - encryption
-  - aes
   relationships:
   - rel_type: Parent
     target_id: 00a8d98b-da52-4c20-8d69-f1f90facbfc3
@@ -397,8 +397,8 @@ requirements:
   req_type: Functional
   tags:
   - interop
-  - channel
   - config
+  - channel
   relationships:
   - rel_type: Parent
     target_id: 00a8d98b-da52-4c20-8d69-f1f90facbfc3
@@ -416,9 +416,9 @@ requirements:
   modified_at: 2025-12-30T18:34:30.970516731Z
   req_type: Functional
   tags:
-  - app
   - messaging
   - text
+  - app
   relationships:
   - rel_type: Parent
     target_id: 00a8d98b-da52-4c20-8d69-f1f90facbfc3
@@ -436,9 +436,9 @@ requirements:
   modified_at: 2025-12-30T18:34:41.008292847Z
   req_type: Functional
   tags:
+  - position
   - gps
   - app
-  - position
   relationships:
   - rel_type: Parent
     target_id: 00a8d98b-da52-4c20-8d69-f1f90facbfc3
@@ -457,8 +457,8 @@ requirements:
   req_type: Functional
   tags:
   - integration
-  - architecture
   - trait
+  - architecture
   relationships:
   - rel_type: Parent
     target_id: 00a8d98b-da52-4c20-8d69-f1f90facbfc3
@@ -490,9 +490,9 @@ requirements:
   modified_at: 2025-12-30T18:35:04.632283047Z
   req_type: Functional
   tags:
-  - radio
-  - hardware
   - sx126x
+  - hardware
+  - radio
   relationships:
   - rel_type: Parent
     target_id: 00a8d98b-da52-4c20-8d69-f1f90facbfc3
@@ -510,9 +510,9 @@ requirements:
   modified_at: 2025-12-30T18:35:14.680235464Z
   req_type: Functional
   tags:
-  - multi-node
-  - simulation
   - testing
+  - simulation
+  - multi-node
   relationships:
   - rel_type: Parent
     target_id: 00a8d98b-da52-4c20-8d69-f1f90facbfc3
@@ -537,6 +537,57 @@ requirements:
   - rel_type: Parent
     target_id: 00a8d98b-da52-4c20-8d69-f1f90facbfc3
     created_at: 2025-12-30T18:35:26.159332074Z
+- id: a068139f-ae8f-43b8-a578-96ea057da46a
+  spec_id: FR-021
+  title: CLI Shell Completions
+  description: Shell completion scripts for bash, zsh, fish, and powershell. Generated via clap_complete. Enables tab-completion for all r4w CLI commands and arguments.
+  status: Completed
+  priority: Medium
+  owner: joe
+  feature: 21-Uncategorized
+  created_at: 2025-12-31T04:00:22.783969284Z
+  modified_at: 2025-12-31T04:00:34.043767158Z
+  req_type: Functional
+  comments:
+  - id: 01d645c8-4bac-4525-8808-17805fb0770a
+    author: joe
+    content: 'Implemented in crates/r4w-cli/src/main.rs. Uses clap_complete crate. Command: r4w completions <shell>'
+    created_at: 2025-12-31T04:00:34.043762762Z
+    modified_at: 2025-12-31T04:00:34.043762762Z
+- id: ddee54af-9cf3-4a5b-8907-f86dd3da3a6a
+  spec_id: FR-022
+  title: Waveform BER Comparison Command
+  description: 'CLI command ''r4w compare'' to analyze BER vs SNR performance across multiple waveforms. Supports BPSK, QPSK, 8PSK, 16QAM, 64QAM, BFSK, 4FSK, OOK, ASK, 4ASK. Output formats: text table, JSON, CSV. Configurable SNR range and test parameters.'
+  status: Completed
+  priority: Medium
+  owner: joe
+  feature: 22-Uncategorized
+  created_at: 2025-12-31T04:00:23.983643989Z
+  modified_at: 2025-12-31T04:00:35.035421937Z
+  req_type: Functional
+  comments:
+  - id: 5d1c546a-0c25-47e4-8af0-01e41ccf20b7
+    author: joe
+    content: Implemented in crates/r4w-cli/src/main.rs cmd_compare(). Uses AWGN channel model from r4w-sim for noise injection.
+    created_at: 2025-12-31T04:00:35.035417564Z
+    modified_at: 2025-12-31T04:00:35.035417564Z
+- id: 382ecbfc-0d43-4a42-96f4-6777f78340d4
+  spec_id: FR-023
+  title: GitHub Actions CI/CD Pipeline
+  description: 'Automated CI/CD with GitHub Actions: (1) ci.yml - test suite, clippy linting, formatting checks, cross-platform builds (Linux/macOS/Windows), WASM builds; (2) benchmarks.yml - performance regression tracking with automatic PR comments and alerts on significant regression (>130%).'
+  status: Completed
+  priority: High
+  owner: joe
+  feature: 23-Uncategorized
+  created_at: 2025-12-31T04:00:24.142231494Z
+  modified_at: 2025-12-31T04:00:36.033962363Z
+  req_type: Functional
+  comments:
+  - id: 8d43f0a0-1be2-4a53-96d4-480454e7cdcf
+    author: joe
+    content: Workflows in .github/workflows/ci.yml and benchmarks.yml. Uses github-action-benchmark for performance tracking.
+    created_at: 2025-12-31T04:00:36.033953536Z
+    modified_at: 2025-12-31T04:00:36.033953536Z
 id_config:
   format: SingleLevel
   numbering: Global
@@ -582,8 +633,8 @@ id_config:
     prefix: META
     description: Database configuration and templates
 features: []
-next_feature_number: 21
-next_spec_number: 21
+next_feature_number: 24
+next_spec_number: 24
 prefix_counters: {}
 relationship_definitions:
 - name: parent
