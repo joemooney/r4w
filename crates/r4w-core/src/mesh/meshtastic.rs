@@ -486,6 +486,29 @@ impl MeshtasticNode {
         self.mac.tx_complete(duration);
     }
 
+    /// Force process TX bypassing MAC timing (for simulation)
+    ///
+    /// This bypasses CSMA/CA timing checks and immediately transmits any queued
+    /// packets. Only use this in simulation contexts where wall-clock timing
+    /// doesn't apply.
+    pub fn force_tx(&mut self) -> Option<Vec<u8>> {
+        // Check for pending rebroadcasts first
+        if let Some(packet) = self.flood_router.get_pending_rebroadcast() {
+            if self.queue_packet(&packet).is_ok() {
+                self.stats.packets_forwarded += 1;
+            }
+        }
+
+        // Bypass MAC timing and get packet directly
+        if let Some(packet) = self.mac.start_tx() {
+            self.stats.packets_tx += 1;
+            self.stats.bytes_tx += packet.len() as u64;
+            Some(packet)
+        } else {
+            None
+        }
+    }
+
     /// Queue a packet for transmission using Meshtastic wire format
     ///
     /// Wire format: WireHeader (16 bytes) + payload + optional MIC (4 bytes)

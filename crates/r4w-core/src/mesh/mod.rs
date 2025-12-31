@@ -82,6 +82,7 @@ pub mod crypto;
 pub mod telemetry;
 pub mod wire;
 pub mod proto;
+pub mod simulation;
 
 // Re-export main types
 pub use traits::{MeshNetwork, MeshPhy, MeshError, MeshResult, MeshStats, MeshConfig};
@@ -98,6 +99,7 @@ pub use telemetry::{
 };
 pub use wire::{WireHeader, WireFlags, WIRE_HEADER_SIZE};
 pub use proto::PortNum;
+pub use simulation::{MeshSimulator, NodePosition, SimConfig, SimEvent, SimStats};
 
 // Re-export protobuf types when meshtastic-interop is enabled
 #[cfg(feature = "meshtastic-interop")]
