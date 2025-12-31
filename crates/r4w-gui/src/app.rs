@@ -15,7 +15,7 @@ use crate::streaming::{PlaybackState, StreamConfig, StreamManager};
 use crate::views::{
     AdsbView, AleView, ChirpView, CodeExplorerView, ConstellationView, DemodView,
     FhssView, GenericDemodulationView, GenericModulationView, GenericPipelineView,
-    ModulationView, OverviewView, PerformanceView, PipelineView, RemoteLabView,
+    MeshNetworkView, ModulationView, OverviewView, PerformanceView, PipelineView, RemoteLabView,
     SpectrumView, Stanag4285View, StreamingView, UdpBenchmarkView, WaveformComparisonView,
     WaveformView, WaveformParams, WaveformWizardView,
 };
@@ -112,6 +112,7 @@ pub enum ActiveView {
     FhssLab,
     Stanag4285Lab,
     AleLab,
+    MeshNetwork,
     Streaming,
     UdpBenchmark,
     RemoteLab,
@@ -136,6 +137,7 @@ impl ActiveView {
             Self::FhssLab => "FHSS Lab",
             Self::Stanag4285Lab => "STANAG 4285",
             Self::AleLab => "ALE",
+            Self::MeshNetwork => "Mesh Network",
             Self::Streaming => "Streaming",
             Self::UdpBenchmark => "UDP Benchmark",
             Self::RemoteLab => "Remote Lab",
@@ -160,6 +162,7 @@ impl ActiveView {
             Self::FhssLab => "Frequency hopping spread spectrum with anti-jam demo",
             Self::Stanag4285Lab => "NATO HF data modem (75-3600 bps PSK)",
             Self::AleLab => "Automatic Link Establishment (8-FSK, Golay FEC)",
+            Self::MeshNetwork => "Interactive mesh network topology and packet flow simulation",
             Self::Streaming => "Real-time signal visualization with oscilloscope and waterfall",
             Self::UdpBenchmark => "Benchmark waveform processing with UDP input",
             Self::RemoteLab => "Control remote Raspberry Pi agents for distributed TX/RX testing",
@@ -185,6 +188,7 @@ impl ActiveView {
             Self::FhssLab => true, // FHSS Lab always available (has own FHSS instance)
             Self::Stanag4285Lab => true, // STANAG 4285 Lab always available
             Self::AleLab => true, // ALE Lab always available
+            Self::MeshNetwork => true, // Mesh network always available
             Self::Streaming => true,
             Self::UdpBenchmark => true,
             Self::RemoteLab => true,
@@ -255,6 +259,7 @@ pub struct WaveformExplorer {
     fhss_view: FhssView,
     stanag_view: Stanag4285View,
     ale_view: AleView,
+    mesh_network_view: MeshNetworkView,
     streaming_view: StreamingView,
     udp_benchmark_view: UdpBenchmarkView,
     remote_lab_view: RemoteLabView,
@@ -415,6 +420,7 @@ impl WaveformExplorer {
             fhss_view: FhssView::new(),
             stanag_view: Stanag4285View::new(),
             ale_view: AleView::new(),
+            mesh_network_view: MeshNetworkView::default(),
             performance_view: PerformanceView::new(),
             streaming_view: StreamingView::new(),
             udp_benchmark_view: UdpBenchmarkView::new(),
@@ -4096,6 +4102,9 @@ impl WaveformExplorer {
                 }
                 ActiveView::AleLab => {
                     self.ale_view.render(ui);
+                }
+                ActiveView::MeshNetwork => {
+                    self.mesh_network_view.render(ui);
                 }
                 ActiveView::Performance => {
                     self.performance_view.render(ui);
