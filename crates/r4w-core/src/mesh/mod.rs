@@ -84,6 +84,7 @@ pub mod wire;
 pub mod proto;
 pub mod simulation;
 pub mod store_forward;
+pub mod traceroute;
 
 // Re-export main types
 pub use traits::{MeshNetwork, MeshPhy, MeshError, MeshResult, MeshStats, MeshConfig};
@@ -102,6 +103,7 @@ pub use wire::{WireHeader, WireFlags, WIRE_HEADER_SIZE};
 pub use proto::PortNum;
 pub use simulation::{MeshSimulator, NodePosition, SimConfig, SimEvent, SimStats};
 pub use store_forward::{StoreForward, StoreForwardConfig, StoreForwardError, StoredMessage};
+pub use traceroute::{Traceroute, TracerouteConfig, TracerouteResult, RouteRequest, RouteReply};
 
 // Re-export protobuf types when meshtastic-interop is enabled
 #[cfg(feature = "meshtastic-interop")]
