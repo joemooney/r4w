@@ -943,6 +943,7 @@ pub mod valve;
 pub mod vapor_pressure_osmometry_analyzer;
 pub mod variable_rate_cic;
 pub mod vco;
+pub mod vdsl2_dmt_processor;
 pub mod vibration_bearing_fault_detector;
 pub mod vibration_order_tracker;
 pub mod viterbi_decoder;
