@@ -10029,3 +10029,50 @@ Four batches of five modules each, expanding into seismology (moment tensor inve
 **Cumulative**: 941 standalone DSP modules, 188 batches complete. Pipeline builder now has 941+ block types. New category added: 5G NR Physical Layer I (SSB cell search with GSCN raster, PSS/SSS demodulation, SSB index from PBCH, PDSCH with LDPC/MCS/TBS, PRACH with Zadoff-Chu preamble detection and timing advance estimation).
 
 **Documentation Updates**: Updated OVERVIEW.md (Batches 13-187 to 13-188, 938 to 941 blocks, updated header count from 863+ to 868+ modules), updated CLAUDE.md Recent Updates, and added batch 188 to PROMPT_HISTORY.md.
+
+### Fix 5G NR Polar Code Shortening Test (2026-02-25)
+
+> Continue fixing the last failing test `test_e2e_pucch_crc11_shortening` in `nr_polar_rate_match.rs`. All 9 polar rate matching tests must pass.
+
+**Problem Analysis**:
+The test `test_e2e_pucch_crc11_shortening` (N=64, K=36, E=48, RateMatchMode::Shortening) was failing because:
+1. Standard Bhattacharyya reliability ordering ranks positions {35,37,...,63} as MOST reliable
+2. For shortening to work, these positions MUST be frozen (they contribute to the shortened codeword region)
+3. This algebraic constraint cannot be satisfied by any simple reliability-based ordering
+
+The polar transform G_N has the property that codeword[p] = XOR of u[j] for all j where G_N[p][j]=1. For shortening with E=48, the last 16 subblock-interleaved codeword positions must be zero, requiring ALL contributing u positions to be frozen — but Bhattacharyya makes them info bits.
+
+**Root Cause**: The frozen mask was built from (N, K) only, without knowledge of E. The actual 5G NR Q_N table was specifically designed to satisfy this constraint, but cannot be derived from simple formulas.
+
+**Actions Taken**:
+1. **Added `shortening_must_freeze(n, e)` function**: Simulates the polar transform + sub-block interleave on each unit vector e_j to identify which u positions affect the shortened region (interleaved positions >= e). Returns a bool mask.
+
+2. **Added `build_frozen_mask_shortening(n, k, e)` function**: Forces must-freeze positions frozen, then selects K most reliable (by Bhattacharyya) from remaining positions as info bits.
+
+3. **Added `info_bit_positions_shortening(n, k, e)` function**: Complementary function returning info bit positions for shortening case.
+
+4. **Added helper functions**: `polar_transform_helper()` and `subblock_interleave_helper()` used by the must-freeze computation (avoid naming conflicts with main transform functions).
+
+5. **Added `SclDecoder::new_with_mask()`**: Constructor accepting pre-computed frozen mask for rate-matching-aware construction.
+
+6. **Added `NrPolarEncoder::new_pucch_shortened(a, n, e)`**: Encoder constructor using E-aware frozen mask.
+
+7. **Added `NrPolarDecoder::new_pucch_shortened(a, n, e, list_size)`**: Matching decoder constructor.
+
+8. **Reverted `reliability_order_n`**: Removed the previous session's interleaved-position-based hack. The function now uses pure Bhattacharyya ordering; the E-aware functions handle shortening correctly.
+
+9. **Updated test**: Changed `test_e2e_pucch_crc11_shortening` to use `new_pucch_shortened(a, n, e)` for both encoder and decoder.
+
+**Mathematical Key Insight**:
+For N=64, E=48 shortening:
+- Must-freeze set (computed by polar_transform_helper + subblock_interleave_helper): {35,37,38,39,43,45,46,47,51,53,54,55,59,61,62,63}
+- These are ALL highly reliable channels (Bhattacharyya ranks 30-63)
+- The correct info positions: {0,1,2,3,4,5,6,8,9,10,12,14,16,17,18,20,21,22,24,25,26,28,32,33,34,36,40,41,42,44,48,49,50,52,56,60}
+
+**Results**: All 64 `nr_polar_rate_match` tests pass (was 63/64).
+
+**Files Modified**:
+- `crates/r4w-core/src/nr_polar_rate_match.rs` — Added E-aware frozen mask functions + new constructors + revert reliability_order_n
+- `crates/r4w-core/src/lib.rs` — Added `pub mod nr_polar_rate_match;` (from previous session)
+
+**Git Operations**: Committed as `[AI:claude] fix(core): add 5G NR polar code rate-matching-aware frozen mask` and pushed to `origin/worktree-agent-a92dc2d1`.
