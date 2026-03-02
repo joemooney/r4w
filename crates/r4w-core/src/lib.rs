@@ -137,6 +137,7 @@ pub mod diamond_anvil_cell_analyzer;
 pub mod dielectric_spectroscopy_processor;
 pub mod digital_down_converter;
 pub mod digital_predistortion;
+pub mod dp_qpsk_receiver;
 pub mod digital_up_converter;
 pub mod digital_twin_state_observer;
 pub mod direction_finding_watson_watt;
