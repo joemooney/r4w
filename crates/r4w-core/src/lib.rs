@@ -698,6 +698,7 @@ pub mod pll_carrier_tracking;
 pub mod pn_scrambler;
 pub mod pn_sync;
 pub mod pocsag_decoder;
+pub mod pocsag_flex_pager;
 pub mod polar_code;
 pub mod polarimetric_optical_rotation_analyzer;
 pub mod polarography_voltammetry_analyzer;
