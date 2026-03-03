@@ -477,6 +477,7 @@ pub mod lte_pdcch_decoder;
 pub mod lte_pdsch_processor;
 pub mod lte_prach_detector;
 pub mod lte_m_processor;
+pub mod lte_cat_nb2_processor;
 pub mod m17_digital_voice;
 pub mod magnetic_anomaly_detector;
 pub mod magnetic_force_microscopy_processor;
